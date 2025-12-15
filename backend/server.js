@@ -1,0 +1,299 @@
+const express = require('express');
+const cors = require('cors');
+const session = require('express-session');
+const axios = require('axios');
+const crypto = require('crypto');
+const path = require('path');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
+const { securityHeaders } = require('./middleware/security');
+
+const app = express();
+const PORT = process.env.BACKEND_PORT || 3001;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+// Middleware - IMPORTANT: Order matters!
+// 1. CORS must come FIRST
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// 2. Body parsers
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// 3. Security headers AFTER CORS
+app.use(securityHeaders);
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Serve static frontend files (for production/ngrok deployment)
+// Only serve static files if build directory exists (not in Docker dev mode)
+const frontendBuildPath = path.join(__dirname, '../frontend/build');
+const fs = require('fs');
+if (fs.existsSync(frontendBuildPath)) {
+  app.use(express.static(frontendBuildPath));
+  console.log('📦 Serving frontend build from:', frontendBuildPath);
+}
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Debug: Log all incoming requests to /api/webhooks/zoom
+app.use('/api/webhooks/zoom', (req, _res, next) => {
+  console.log('\n' + '='.repeat(70));
+  console.log('📨 WEBHOOK REQUEST RECEIVED');
+  console.log('='.repeat(70));
+  console.log('Method:', req.method);
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('Query:', JSON.stringify(req.query, null, 2));
+  console.log('='.repeat(70) + '\n');
+  next();
+});
+
+// Test endpoint to simulate RTMS webhook (for debugging)
+app.post('/api/webhooks/test-rtms', async (_req, res) => {
+  console.log('\n🧪 TEST RTMS WEBHOOK TRIGGERED\n');
+
+  const testPayload = {
+    event: 'meeting.rtms_started',
+    payload: {
+      meeting_uuid: 'test-meeting-123',
+      rtms_stream_id: 'test-stream-456',
+      server_urls: ['wss://rtms.zoom.us/test']
+    }
+  };
+
+  try {
+    const rtmsServerUrl = process.env.RTMS_SERVER_URL || 'http://localhost:8080';
+    console.log(`→ Forwarding test webhook to RTMS server at ${rtmsServerUrl}`);
+    await axios.post(rtmsServerUrl, testPayload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log('✓ Successfully forwarded test webhook to RTMS server');
+    res.json({ success: true, message: 'Test webhook sent to RTMS server' });
+  } catch (error) {
+    console.error('✗ Failed to forward test webhook:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Home endpoint - serves the React app (for Zoom Marketplace)
+// In Docker mode, this redirects to root which is proxied to frontend
+app.get('/api/home', (req, res) => {
+  // Redirect to root - the proxy will handle serving the frontend
+  res.redirect('/');
+});
+
+// OAuth: Authorize endpoint
+app.get('/api/auth/authorize', (req, res) => {
+  const { code, state } = req.query;
+
+  if (!code) {
+    return res.status(400).json({ error: 'Missing authorization code' });
+  }
+
+  // Exchange code for tokens
+  const tokenUrl = `${process.env.ZOOM_HOST || 'https://zoom.us'}/oauth/token`;
+  const params = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: code,
+    redirect_uri: process.env.ZOOM_REDIRECT_URL || `${process.env.PUBLIC_URL}/api/auth/callback`
+  });
+
+  const authHeader = Buffer.from(
+    `${process.env.ZOOM_APP_CLIENT_ID}:${process.env.ZOOM_APP_CLIENT_SECRET}`
+  ).toString('base64');
+
+  axios.post(tokenUrl, params.toString(), {
+    headers: {
+      'Authorization': `Basic ${authHeader}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  })
+  .then(response => {
+    const { access_token, refresh_token } = response.data;
+
+    // Store tokens in session
+    req.session.accessToken = access_token;
+    req.session.refreshToken = refresh_token;
+    req.session.save();
+
+    res.json({ success: true, message: 'Authorization successful' });
+  })
+  .catch(error => {
+    console.error('Token exchange error:', error.response?.data || error.message);
+    res.status(500).json({
+      error: 'Failed to exchange authorization code',
+      details: error.response?.data || error.message
+    });
+  });
+});
+
+// OAuth: Callback endpoint
+app.get('/api/auth/callback', async (req, res) => {
+  const { code, state } = req.query;
+
+  if (!code) {
+    return res.status(400).send('Missing authorization code');
+  }
+
+  try {
+    const tokenUrl = `${process.env.ZOOM_HOST || 'https://zoom.us'}/oauth/token`;
+    const params = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: code,
+      redirect_uri: process.env.ZOOM_REDIRECT_URL || `${process.env.PUBLIC_URL}/api/auth/callback`
+    });
+
+    const authHeader = Buffer.from(
+      `${process.env.ZOOM_APP_CLIENT_ID}:${process.env.ZOOM_APP_CLIENT_SECRET}`
+    ).toString('base64');
+
+    const response = await axios.post(tokenUrl, params.toString(), {
+      headers: {
+        'Authorization': `Basic ${authHeader}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+
+    const { access_token, refresh_token } = response.data;
+
+    // Store tokens in session
+    req.session.accessToken = access_token;
+    req.session.refreshToken = refresh_token;
+    await req.session.save();
+
+    // Redirect back to app
+    res.redirect(process.env.FRONTEND_URL || 'http://localhost:3000');
+  } catch (error) {
+    console.error('OAuth callback error:', error.response?.data || error.message);
+    res.status(500).send('Authentication failed');
+  }
+});
+
+// Webhook endpoint for Zoom events
+app.post('/api/webhooks/zoom', async (req, res) => {
+  const { event, payload } = req.body;
+
+  console.log('Webhook received:', event);
+  console.log('Payload:', JSON.stringify(payload, null, 2));
+
+  // Handle URL validation
+  if (event === 'endpoint.url_validation') {
+    if (!payload?.plainToken) {
+      return res.status(400).json({ error: 'Missing plainToken' });
+    }
+
+    const encryptedToken = crypto
+      .createHmac('sha256', process.env.ZOOM_SECRET_TOKEN || 'your-secret-token')
+      .update(payload.plainToken)
+      .digest('hex');
+
+    return res.json({
+      plainToken: payload.plainToken,
+      encryptedToken
+    });
+  }
+
+  // Forward RTMS events to RTMS server
+  // The @zoom/rtms SDK creates its own webhook endpoint at the root path
+  // Support both ZCC events (contact_center.voice_rtms_*) and regular meeting events
+  const rtmsEvents = [
+    'contact_center.voice_rtms_started',
+    'contact_center.voice_rtms_stopped',
+    'meeting.rtms_started',
+    'meeting.rtms_stopped'
+  ];
+
+  if (rtmsEvents.includes(event)) {
+    try {
+      const rtmsServerUrl = process.env.RTMS_SERVER_URL || 'http://localhost:8080';
+      console.log(`→ Forwarding ${event} to RTMS server at ${rtmsServerUrl}`);
+      await axios.post(rtmsServerUrl, req.body, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      console.log(`✓ Successfully forwarded ${event} to RTMS server`);
+    } catch (error) {
+      console.error(`✗ Failed to forward ${event} to RTMS server:`, error.message);
+    }
+  }
+
+  res.status(200).json({ received: true });
+});
+
+// Proxy endpoint for Zoom API calls
+app.all('/api/zoom/*', async (req, res) => {
+  const accessToken = req.session.accessToken;
+
+  if (!accessToken) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  const zoomPath = req.path.replace('/api/zoom/', '');
+  const zoomUrl = `https://api.zoom.us/v2/${zoomPath}`;
+
+  try {
+    const response = await axios({
+      method: req.method,
+      url: zoomUrl,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      data: req.body,
+      params: req.query
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Zoom API proxy error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: 'Zoom API request failed',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+// Proxy all other requests to frontend React dev server (Docker mode)
+// This allows the backend to serve as single entry point
+app.use('/', createProxyMiddleware({
+  target: FRONTEND_URL,
+  changeOrigin: true,
+  ws: true, // Proxy websockets for React hot reload
+  logLevel: 'silent',
+  onError: (err, req, res) => {
+    console.log('Proxy error:', err.message);
+    res.writeHead(500, {
+      'Content-Type': 'text/plain',
+    });
+    res.end('Frontend proxy error. Is the frontend container running?');
+  }
+}));
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Backend server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Frontend URL: ${FRONTEND_URL}`);
+  console.log(`Public URL: ${process.env.PUBLIC_URL || 'http://localhost:3001'}`);
+  console.log(`\n✅ All requests to http://localhost:${PORT} are proxied to frontend at ${FRONTEND_URL}`);
+  console.log(`✅ API requests to /api/* are handled by this backend\n`);
+});
