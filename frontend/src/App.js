@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import zoomSdk from '@zoom/appssdk';
+import AIAssistant from './components/AIAssistant';
 import './App.css';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [rtmsStatus, setRtmsStatus] = useState('waiting'); // 'waiting', 'ready', 'capturing', 'error'
+  const [simulatedTranscripts, setSimulatedTranscripts] = useState([]); // For testing AI Assistant
 
   // Fetch ZCC engagement context
   const fetchEngagementContext = useCallback(async () => {
@@ -229,7 +231,7 @@ function App() {
                 <>
                   <strong>RTMS READY</strong>
                   <br />
-                  <span className="rtms-status-detail">Waiting for {runningContext === 'inContactCenter' ? 'engagement to start' : 'meeting activity'}</span>
+                  <span className="rtms-status-detail">Capturing {runningContext === 'inContactCenter' ? 'engagement activity' : 'meeting activity'}</span>
                 </>
               )}
               {rtmsStatus === 'waiting' && (
@@ -254,6 +256,14 @@ function App() {
           <div className="message-box">
             {message}
           </div>
+        )}
+
+        {/* AI Assistant - Show when RTMS is active or ready */}
+        {(runningContext === 'inContactCenter' || runningContext === 'inMeeting') && (
+          <AIAssistant
+            isCapturing={rtmsStatus === 'capturing'}
+            simulatedTranscripts={simulatedTranscripts}
+          />
         )}
 
         {zoomInitialized && (

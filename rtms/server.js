@@ -1,8 +1,10 @@
 import rtms from '@zoom/rtms';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { writeFileSync, mkdirSync, existsSync, createWriteStream } from 'fs';
+import { mkdirSync, existsSync, createWriteStream } from 'fs';
 import dotenv from 'dotenv';
+import axios from 'axios';
+import wav from 'wav';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,8 +16,21 @@ dotenv.config({ path: join(__dirname, '../.env') });
 // We use the PORT env var to match what's configured in docker-compose.yml
 const PORT = process.env.PORT || 8080;
 
+// Backend URL for sending transcript data
+const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:3001';
+
 // Store active RTMS clients and streams (engagement-aware)
 const activeEngagements = new Map();
+
+// Send transcript data to backend for real-time processing
+async function sendTranscriptToBackend(transcriptData) {
+  try {
+    await axios.post(`${BACKEND_URL}/api/rtms/transcript`, transcriptData);
+    console.log(`✓ Sent transcript to backend for analysis`);
+  } catch (error) {
+    console.error(`✗ Failed to send transcript to backend:`, error.message);
+  }
+}
 
 // Ensure data directories exist
 const dataDir = join(__dirname, 'data');
@@ -113,11 +128,26 @@ async function handleRTMSStarted(payload, context = 'Unknown') {
   transcriptStream.write(`Stream ID: ${rtmsStreamId}\n`);
   transcriptStream.write(`${'='.repeat(70)}\n\n`);
 
-  // Buffer for audio data
-  const audioBuffer = [];
+  // Setup WAV file writer for real-time audio capture
+  // Zoom RTMS provides PCM audio at 16kHz, 16-bit, mono
+  const audioFilename = `audio_${contextPrefix}_${safeEngagementId}_${timestamp}.wav`;
+  const audioPath = join(audioDir, audioFilename);
 
-  // Handle audio data with enhanced logging
+  const wavWriter = new wav.FileWriter(audioPath, {
+    sampleRate: 16000,    // 16kHz from Zoom RTMS
+    channels: 1,          // Mono audio
+    bitDepth: 16          // 16-bit PCM
+  });
+
+  console.log(`[${engagementId}] 🎵 WAV file initialized: ${audioPath}`);
+
+  // Handle audio data with enhanced logging and real-time WAV writing
   client.onAudioData((data, timestamp, metadata) => {
+    const engData = activeEngagements.get(engagementId);
+    if (engData) {
+      engData.audioChunkCount++;
+    }
+
     console.log(`[${engagementId}] 🔊 Audio data received: ${data.length} bytes at timestamp ${timestamp}`);
     if (metadata?.userName) {
       console.log(`[${engagementId}]    👤 Speaker: ${metadata.userName}`);
@@ -125,8 +155,11 @@ async function handleRTMSStarted(payload, context = 'Unknown') {
     if (metadata?.userId) {
       console.log(`[${engagementId}]    🆔 User ID: ${metadata.userId}`);
     }
-    console.log(`[${engagementId}]    📦 Total audio chunks captured: ${audioBuffer.length + 1}`);
-    audioBuffer.push(data);
+    console.log(`[${engagementId}]    📦 Total audio chunks captured: ${engData?.audioChunkCount || 0}`);
+
+    // Write PCM audio data directly to WAV file (real-time compression)
+    // The wav library handles WAV header and proper encoding
+    wavWriter.write(data);
   });
 
   // Handle transcript data with enhanced logging
@@ -143,6 +176,16 @@ async function handleRTMSStarted(payload, context = 'Unknown') {
     console.log(`[${engagementId}]    👤 Speaker: ${userName} (ID: ${userId})`);
     console.log(`[${engagementId}]    ⏱️  Timestamp: ${date.toISOString()}`);
     console.log(`[${engagementId}]    📝 Text: "${text}"`);
+
+    // Send transcript to backend for real-time AI analysis
+    sendTranscriptToBackend({
+      text,
+      speaker: userName,
+      userId,
+      timestamp: date.toISOString(),
+      engagementId,
+      context
+    });
   });
 
   // Store engagement data with context
@@ -150,7 +193,9 @@ async function handleRTMSStarted(payload, context = 'Unknown') {
     client,
     transcriptStream,
     transcriptPath,
-    audioBuffer,
+    wavWriter,
+    audioPath,
+    audioChunkCount: 0,
     timestamp,
     rtmsStreamId,
     context,  // Store context (ZCC or Meeting) for proper file naming
@@ -212,7 +257,7 @@ async function cleanupEngagement(engagementId) {
     return;
   }
 
-  const { client, transcriptStream, transcriptPath, audioBuffer, timestamp } = engagementData;
+  const { client, transcriptStream, transcriptPath, wavWriter, audioPath, audioChunkCount } = engagementData;
 
   try {
     // Close transcript stream
@@ -223,19 +268,27 @@ async function cleanupEngagement(engagementId) {
 
     console.log(`✓ [${engagementId}] Transcript saved: ${transcriptPath}`);
 
-    // Save audio data if any
-    if (audioBuffer.length > 0) {
-      const audioData = Buffer.concat(audioBuffer);
-      const safeEngagementId = engagementId.replace(/[^a-zA-Z0-9]/g, '_');
-      const contextPrefix = engagementData.context === 'ZCC' ? 'zcc' : 'meeting';
-      const audioFilename = `audio_${contextPrefix}_${safeEngagementId}_${timestamp}.raw`;
-      const audioPath = join(audioDir, audioFilename);
+    // Close WAV file writer
+    if (wavWriter) {
+      await new Promise((resolve, reject) => {
+        wavWriter.end((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      console.log(`✓ [${engagementId}] WAV audio file saved: ${audioPath}`);
 
-      writeFileSync(audioPath, audioData);
-      console.log(`✓ [${engagementId}] Audio saved: ${audioPath}`);
-      console.log(`  Size: ${(audioData.length / 1024).toFixed(2)} KB`);
-      console.log(`  Convert: ffmpeg -f s16le -ar 16000 -ac 1 -i ${audioFilename} ${audioFilename.replace('.raw', '.wav')}`);
-    } else {
+      // Calculate and display WAV file size
+      const fs = await import('fs/promises');
+      try {
+        const stats = await fs.stat(audioPath);
+        console.log(`  Size: ${(stats.size / 1024).toFixed(2)} KB (${(stats.size / (1024 * 1024)).toFixed(2)} MB)`);
+        console.log(`  Format: WAV (16kHz, 16-bit, Mono)`);
+        console.log(`  Audio chunks captured: ${audioChunkCount}`);
+      } catch (statErr) {
+        console.log(`  Audio chunks captured: ${audioChunkCount}`);
+      }
+    } else if (audioChunkCount === 0) {
       console.log(`ℹ [${engagementId}] No audio data captured`);
     }
 
@@ -270,7 +323,7 @@ setInterval(() => {
     console.log(`\n📊 Active Engagements: ${activeEngagements.size}`);
     for (const [engagementId, data] of activeEngagements.entries()) {
       const duration = Math.floor((Date.now() - new Date(data.startedAt).getTime()) / 1000);
-      console.log(`  - ${engagementId}: ${duration}s (${data.audioBuffer.length} audio chunks)`);
+      console.log(`  - ${engagementId}: ${duration}s (${data.audioChunkCount} audio chunks)`);
     }
     console.log('');
   }

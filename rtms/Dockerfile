@@ -20,8 +20,8 @@ RUN npm install
 # Copy source code (volumes will override this in development)
 COPY . .
 
-# Create data directories
-RUN mkdir -p /app/data/audio /app/data/transcripts
+# Create data and logs directories
+RUN mkdir -p /app/data/audio /app/data/transcripts /app/logs
 
 # Expose port
 EXPOSE 3002

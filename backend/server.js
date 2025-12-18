@@ -5,11 +5,22 @@ const axios = require('axios');
 const crypto = require('crypto');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const http = require('http');
+const { Server } = require('socket.io');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const { securityHeaders } = require('./middleware/security');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
 const PORT = process.env.BACKEND_PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -53,6 +64,27 @@ if (fs.existsSync(frontendBuildPath)) {
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log('✅ Frontend client connected via WebSocket:', socket.id);
+
+  socket.on('disconnect', () => {
+    console.log('❌ Frontend client disconnected:', socket.id);
+  });
+});
+
+// Transcript data endpoint from RTMS server
+app.post('/api/rtms/transcript', (req, res) => {
+  const transcript = req.body;
+  console.log('📝 Transcript received from RTMS:', transcript);
+
+  // Broadcast transcript to all connected frontend clients
+  io.emit('transcript-data', transcript);
+  console.log('✓ Broadcasted transcript to frontend clients');
+
+  res.json({ success: true });
 });
 
 // Debug: Log all incoming requests to /api/webhooks/zoom
@@ -288,12 +320,13 @@ app.use('/', createProxyMiddleware({
   }
 }));
 
-// Start server
-app.listen(PORT, () => {
+// Start server with Socket.IO
+server.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Frontend URL: ${FRONTEND_URL}`);
   console.log(`Public URL: ${process.env.PUBLIC_URL || 'http://localhost:3001'}`);
   console.log(`\n✅ All requests to http://localhost:${PORT} are proxied to frontend at ${FRONTEND_URL}`);
-  console.log(`✅ API requests to /api/* are handled by this backend\n`);
+  console.log(`✅ API requests to /api/* are handled by this backend`);
+  console.log(`✅ WebSocket server ready for real-time transcripts\n`);
 });
