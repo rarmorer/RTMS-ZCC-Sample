@@ -1,240 +1,475 @@
-# Zoom RTMS App - Real-Time Media Streams for ZCC & Meetings
+# Zoom Contact Center RTMS App
 
-A comprehensive Zoom App that captures real-time audio and transcripts from both **Zoom Contact Center (ZCC)** engagements and **Zoom Meetings** using the Zoom RTMS (Real-Time Media Streams) SDK.
+A Zoom Contact Center application that captures real-time media streams (RTMS) with manual start/stop control. This app allows agents to record audio from contact center engagements on demand.
 
-## 🎯 Features
+## Overview
 
-- **Dual Context Support**: Works in both Zoom Contact Center and Zoom Meetings
-- **Real-Time Audio Capture**: Live audio streaming with OPUS codec at 16kHz
-- **Live Transcription**: Real-time speech-to-text with speaker identification
-- **Automatic Data Storage**: Audio and transcripts saved automatically per engagement/meeting
-- **Docker-Based**: Fully containerized for easy deployment
-- **Webhook Integration**: Automatic RTMS connection via Zoom webhooks
-- **Production Ready**: Includes ngrok integration for testing and security middleware
+This application provides manual RTMS control for Zoom Contact Center engagements, enabling agents to:
+- Start and stop audio capture during active engagements
+- Capture high-quality audio (L16 codec, 16kHz, mono)
+- Save captured audio as WAV files for processing
 
-## 📁 Project Structure
+## Architecture
+
+The application consists of three main services:
+
+### 1. Frontend (React App)
+- **Port:** 3000
+- **Purpose:** Zoom Apps SDK interface that runs inside Zoom Contact Center
+- **Key Features:**
+  - Detects when engagement starts
+  - Provides manual Start/Stop RTMS buttons
+  - Shows real-time capture status
+  - Displays engagement context and metadata
+
+### 2. Backend API Server (Express)
+- **Port:** 3001
+- **Purpose:** Handles API requests, webhooks, and proxies to frontend
+- **Key Features:**
+  - Receives Zoom webhooks (RTMS started/stopped events)
+  - Forwards RTMS events to the RTMS server
+  - Handles RTMS control API (start/stop actions)
+  - Validates webhook signatures
+  - Prevents duplicate webhook processing
+  - Serves as single entry point for ngrok
+
+### 3. RTMS Server (Node.js WebSocket)
+- **Port:** 8080
+- **Purpose:** Manages real-time media stream connections
+- **Key Features:**
+  - Connects to Zoom's RTMS signaling WebSocket
+  - Connects to Zoom's media WebSocket for audio
+  - Receives and saves audio chunks as WAV files
+  - Handles engagement lifecycle (start/stop/cleanup)
+
+## Flow Diagram
 
 ```
-RTMS_ZCC/
-├── frontend/          # React frontend (Zoom App UI)
-├── backend/           # Express backend (API, webhooks, OAuth)
-├── rtms/              # RTMS server (audio/transcript capture)
-├── docs/              # Comprehensive documentation
-├── docker_files/      # Docker setup guides
-├── .env.example       # Environment configuration template
-├── docker-compose.yml # Docker orchestration
-└── package.json       # Root package with unified scripts
+┌─────────────────────────────────────────────────────────────────┐
+│                     Zoom Contact Center                          │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  Agent using Zoom Apps (Frontend React App)              │  │
+│  │  - Clicks "Start RTMS" button                            │  │
+│  └──────────────────┬────────────────────────────────────────┘  │
+│                     │ POST /api/zoom/rtms/control               │
+│                     │ { action: 'start', engagementId }         │
+└─────────────────────┼───────────────────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Backend API Server (Port 3001)                      │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  1. Receives RTMS control request                         │  │
+│  │  2. Calls Zoom Contact Center API:                        │  │
+│  │     PUT /v2/contact_center/{engagementId}/rtms_app/status │  │
+│  │     Body: { action: 'start', settings: { client_id } }    │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                      │
+                      │ Zoom processes request and sends webhook
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Backend API Server (Port 3001)                      │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  Webhook: contact_center.voice_rtms_started               │  │
+│  │  Payload: { engagement_id, rtms_stream_id, server_urls }  │  │
+│  │  → Forwards to RTMS Server                                │  │
+│  └──────────────────┬────────────────────────────────────────┘  │
+└────────────────────┼────────────────────────────────────────────┘
+                     │ POST http://localhost:8080
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              RTMS Server (Port 8080)                             │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  1. Receives webhook with server_urls                     │  │
+│  │  2. Generates HMAC signature for authentication           │  │
+│  │  3. Connects to Zoom Signaling WebSocket                  │  │
+│  │     - Sends handshake with signature                      │  │
+│  │     - Receives media server URL                           │  │
+│  │  4. Connects to Zoom Media WebSocket                      │  │
+│  │     - Sends media handshake (audio, L16, 16kHz, mono)     │  │
+│  │     - Sends CLIENT_READY_ACK to signaling                 │  │
+│  │  5. Receives audio chunks (msg_type: 14)                  │  │
+│  │     - Decodes base64 audio data                           │  │
+│  │     - Writes to WAV file (rtms/data/audio/)               │  │
+│  │  6. On stop: closes connections and saves file            │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Quick Start
+## Prerequisites
 
-### Prerequisites
+Before setting up the application, ensure you have:
 
-- Docker Desktop installed
-- Node.js 18+ (for local development)
-- Zoom App credentials (Client ID, Secret, Token)
-- ngrok account (for testing with Zoom)
+1. **Node.js** (v18 or higher)
+2. **npm** (v9 or higher)
+3. **Docker & Docker Compose** (for containerized deployment)
+4. **ngrok** (for exposing local server to Zoom)
+5. **Zoom Contact Center** account with agent access
+6. **Zoom Marketplace** developer account
 
-### 1. Clone and Setup
+## Zoom Marketplace Setup
+
+### Step 1: Create a Contact Center App
+
+1. Go to [Zoom Marketplace](https://marketplace.zoom.us)
+2. Click "Develop" → "Build App"
+3. Select "Contact Center App"
+4. Fill in basic information:
+   - **App Name:** Your app name (e.g., "RTMS Audio Capture")
+   - **Short Description:** Brief description
+   - **Long Description:** Detailed description
+
+### Step 2: Configure App Credentials
+
+After creating the app, you'll receive credentials from the "App Credentials" tab:
+
+- **Client ID** → `ZOOM_APP_CLIENT_ID`
+- **Client Secret** → `ZOOM_APP_CLIENT_SECRET`
+- **Secret Token** → `ZOOM_SECRET_TOKEN`
+
+You'll also need to generate a **Bearer Token**:
+1. Use the OAuth flow or get it from your Zoom account
+2. This token is used to call Zoom's Contact Center API
+3. Set as `ZOOM_BEARER_TOKEN`
+
+**IMPORTANT NOTE:** This application currently uses a hard-coded bearer token for OAuth authorization with the Zoom Contact Center API. This is a simplified approach suitable for development and testing. For production deployments, it is strongly recommended to implement proper OAuth token management, including:
+- Automatic token generation through OAuth 2.0 flow
+- Token refresh logic to handle expired tokens
+- Secure token storage (e.g., encrypted database or secrets manager)
+- Token rotation and expiration handling
+
+See the "Production Deployment" section for more details on implementing proper OAuth token management.
+
+### Step 3: Configure App URLs
+
+You'll need an ngrok URL for the following settings. Start ngrok first:
 
 ```bash
-git clone <your-repo-url>
-cd RTMS_ZCC
+npm run ngrok
+# or
+ngrok http 3001
+```
+
+Copy your ngrok HTTPS URL (e.g., `https://abc123.ngrok-free.dev`) and configure:
+
+#### OAuth Settings
+- **OAuth Redirect URL:** `https://your-ngrok-url.ngrok-free.dev/api/auth/callback`
+- **OAuth Allow List:** `https://your-ngrok-url.ngrok-free.dev`
+
+#### App Settings
+- **Home URL:** `https://your-ngrok-url.ngrok-free.dev/api/home`
+- **Webhook Event Notification Endpoint:** `https://your-ngrok-url.ngrok-free.dev/api/webhooks/zoom`
+
+#### Feature Configuration
+Enable the following:
+- Contact Center App
+- RTMS (Real-Time Media Streams)
+- Webhook Events:
+  - `contact_center.voice_rtms_started`
+  - `contact_center.voice_rtms_stopped`
+
+Within the "Surface" Section enable the following: 
+- add in your Home URL 
+- Select "Contact Center" under "Select where to use your app"
+- In the domain allow list, add in the domain where your app is hosted (ex: uncongregative-unexpedient-detra.ngrok-free.dev), and any other domains accessed by your application 
+- Toggle Zoom Apps SDK **ON** under "In-client App Features"
+  - Add the following APIs: `getEngagementContext`, `getEngagementStatus`
+
+### Step 4: Configure Scopes
+
+Add these OAuth scopes:
+- `contact_center:read:zcc_voice_audio`
+- `contact_center:update:engagement_rtms_app_status`
+
+## Environment Setup
+
+### 1. Copy Environment File
+
+```bash
 cp .env.example .env
 ```
 
-### 2. Configure Environment
+### 2. Configure Required Credentials
 
-Edit `.env` and add your Zoom App credentials:
+Edit `.env` and add your Zoom credentials:
 
 ```bash
-ZOOM_APP_CLIENT_ID=your_client_id
-ZOOM_APP_CLIENT_SECRET=your_client_secret
-ZOOM_SECRET_TOKEN=your_secret_token
+# From Zoom Marketplace App Credentials
+ZOOM_APP_CLIENT_ID=your_client_id_here
+ZOOM_APP_CLIENT_SECRET=your_client_secret_here
+ZOOM_SECRET_TOKEN=your_webhook_secret_token_here
+ZOOM_BEARER_TOKEN=your_bearer_token_here 
+
+# Your ngrok URL (update after starting ngrok)
+PUBLIC_URL=https://your-ngrok-url.ngrok-free.dev
+ZOOM_REDIRECT_URL=https://your-ngrok-url.ngrok-free.dev/api/auth/callback
 ```
 
-### 3. Start with Docker
+### 3. Generate Session Secret
 
 ```bash
-# Start all services
-docker-compose up --build
+# Generate a random session secret
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
-# Or run in detached mode
-docker-compose up -d
+Add the generated secret to `.env`:
+```bash
+SESSION_SECRET=your_generated_session_secret
+```
+
+## Installation
+
+### Install Dependencies for All Services
+
+```bash
+npm run install:all
+```
+
+This will install dependencies for:
+- Root workspace
+- Frontend (React app)
+- Backend (Express API)
+- RTMS server (WebSocket handler)
+
+## Running the Application
+
+### Option 1: Docker (Recommended)
+
+1. Start ngrok (in a separate terminal):
+```bash
+npm run ngrok
+```
+
+2. Update `.env` with your ngrok URL
+
+3. Start all services:
+```bash
+npm start
 ```
 
 This starts:
-- **Frontend**: http://localhost:3000 (React app)
-- **Backend**: http://localhost:3001 (API server)
-- **RTMS Server**: http://localhost:8080 (Media capture)
+- Frontend at `http://localhost:3000`
+- Backend at `http://localhost:3001` (exposed via ngrok)
+- RTMS server at `http://localhost:8080`
 
-### 4. Setup ngrok for Testing
+### Option 2: Local Development (without Docker)
+
+1. Start ngrok:
+```bash
+npm run ngrok
+```
+
+2. Update `.env` with your ngrok URL
+
+3. Start all services:
+```bash
+npm run dev:local
+```
+
+## Verification
+
+### 1. Check Service Health
 
 ```bash
-# In a separate terminal
-ngrok http 3001
+# Backend health check
+curl http://localhost:3001/health
 
-# Update .env with your ngrok URL
-PUBLIC_URL=https://your-ngrok-url.ngrok-free.app
-ZOOM_REDIRECT_URL=https://your-ngrok-url.ngrok-free.app/api/auth/callback
-
-# Restart Docker services
-docker-compose restart
+# RTMS server health check
+curl http://localhost:8080/health
 ```
 
-### 5. Configure Zoom Marketplace
+### 2. Test Zoom App
 
-Update your Zoom App settings:
-- **Home URL**: `https://your-ngrok-url.ngrok-free.app/api/home`
-- **Redirect URL**: `https://your-ngrok-url.ngrok-free.app/api/auth/callback`
-- **Event Notification Endpoint**: `https://your-ngrok-url.ngrok-free.app/api/webhooks/zoom`
-- **Subscribe to Events**:
-  - `contact_center.voice_rtms_started`
-  - `contact_center.voice_rtms_stopped`
-  - `meeting.rtms_started`
-  - `meeting.rtms_stopped`
+1. Log into Zoom Contact Center as an agent
+2. Open the Apps panel
+3. Find and launch your app
+4. Wait for an active engagement
+5. Check "Engagement Started" checkbox
+6. Click "Start RTMS" button
+7. Verify audio capture begins
 
-## 📖 Documentation
+### 3. Check Audio Files
 
-Detailed guides are available in the [docs/](docs/) directory:
+Captured audio files are saved to:
+```bash
+rtms/data/audio/audio_{engagement_id}_{timestamp}.wav
+```
 
-- [00-quick-start.md](docs/00-quick-start.md) - Get started in 5 minutes
-- [01-architecture-overview.md](docs/01-architecture-overview.md) - System architecture
-- [02-sdk-setup.md](docs/02-sdk-setup.md) - Zoom SDK configuration
-- [03-frontend-guide.md](docs/03-frontend-guide.md) - Frontend development
-- [04-backend-guide.md](docs/04-backend-guide.md) - Backend API reference
-- [05-rtms-guide.md](docs/05-rtms-guide.md) - RTMS server implementation
-- [07-security-guide.md](docs/07-security-guide.md) - Security best practices
+## Project Structure
 
-## 🔧 Development
+```
+.
+├── frontend/                 # React app (Zoom Apps SDK)
+│   ├── src/
+│   │   ├── App.js           # Main app component
+│   │   ├── components/
+│   │   │   ├── Engagement.js    # Engagement UI with RTMS controls
+│   │   │   └── Engagement.css
+│   │   └── index.js
+│   └── package.json
+│
+├── backend/                  # Express API server
+│   ├── server.js            # Main server file
+│   ├── routes/
+│   │   └── zoom.js          # Zoom API routes
+│   ├── controllers/
+│   │   └── zoomController.js    # RTMS control logic
+│   ├── middleware/
+│   │   └── security.js      # Security headers
+│   └── package.json
+│
+├── rtms/                     # RTMS WebSocket server
+│   ├── server.js            # WebSocket handler
+│   ├── data/
+│   │   └── audio/           # Captured audio files (WAV)
+│   └── package.json
+│
+├── docker-compose.yml        # Docker services configuration
+├── .env.example             # Environment variables template
+├── package.json             # Root workspace scripts
+└── README.md                # This file
+```
 
-### Local Development (without Docker)
+## How It Works
+
+### RTMS Authentication
+
+The RTMS server authenticates with Zoom using HMAC-SHA256 signatures:
+
+```javascript
+const message = `${CLIENT_ID},${engagement_id},${rtms_stream_id}`;
+const signature = crypto
+  .createHmac('sha256', CLIENT_SECRET)
+  .update(message)
+  .digest('hex');
+```
+
+### Audio Format
+
+Audio is captured with the following specifications:
+- **Codec:** L16 (uncompressed linear PCM)
+- **Sample Rate:** 16kHz
+- **Channels:** Mono (1 channel)
+- **Bit Depth:** 16-bit
+- **Interval:** 20ms chunks
+- **Format:** WAV file
+
+### Manual Control Flow
+
+1. Agent checks "Engagement Started" when call begins
+2. Agent clicks "Start RTMS"
+3. Frontend calls Backend API: `POST /api/zoom/rtms/control`
+4. Backend calls Zoom API to start RTMS
+5. Zoom sends webhook: `contact_center.voice_rtms_started`
+6. Backend forwards webhook to RTMS server
+7. RTMS server connects to Zoom WebSockets
+8. Audio chunks are received and saved to WAV file
+9. Agent clicks "Stop RTMS" to end capture
+10. RTMS server closes connections and finalizes WAV file
+
+## Troubleshooting
+
+### Issue: Webhooks not received
+
+**Solution:**
+1. Verify ngrok is running: `npm run ngrok`
+2. Check webhook URL in Zoom Marketplace matches ngrok URL
+3. Verify `ZOOM_SECRET_TOKEN` in `.env` matches Marketplace
+4. Check backend logs: `npm run logs:backend`
+
+### Issue: RTMS connection fails
+
+**Solution:**
+1. Verify `ZOOM_APP_CLIENT_ID` and `ZOOM_APP_CLIENT_SECRET` are correct
+2. Check RTMS server logs: `npm run logs:rtms`
+3. Ensure RTMS feature is enabled in Marketplace app settings
+
+### Issue: Bearer token expired
+
+**Solution:**
+1. Generate a new bearer token from Zoom
+2. Update `ZOOM_BEARER_TOKEN` in `.env`
+3. Restart services: `npm stop && npm start`
+
+### Issue: No audio file created
+
+**Solution:**
+1. Check RTMS server logs for errors
+2. Verify `rtms/data/audio/` directory exists and is writable
+3. Ensure WebSocket connections succeeded
+4. Check for duplicate webhook processing (dedup window = 5 seconds)
+
+## NPM Scripts
 
 ```bash
-# Install dependencies for all services
-npm install
+# Install dependencies
+npm run install:all          # Install for all services
 
-# Terminal 1: Start frontend
-cd frontend && npm start
+# Start services
+npm start                    # Docker mode (recommended)
+npm run dev:local           # Local mode (no Docker)
 
-# Terminal 2: Start backend
-cd backend && npm start
+# Individual services (local mode)
+npm run dev:frontend        # Start frontend only
+npm run dev:backend         # Start backend only
+npm run dev:rtms            # Start RTMS server only
 
-# Terminal 3: Start RTMS server
-cd rtms && npm start
+# Docker management
+npm stop                    # Stop Docker containers
+npm run logs                # View all logs
+npm run logs:frontend       # Frontend logs only
+npm run logs:backend        # Backend logs only
+npm run logs:rtms          # RTMS server logs only
+npm run rebuild             # Rebuild and restart containers
+npm run clean               # Clean Docker volumes
+
+# Utilities
+npm run ngrok               # Start ngrok tunnel
+npm run health              # Check backend health
+npm run clean:data          # Clear audio files
+npm run build               # Build frontend for production
 ```
 
-### Useful Commands
+## Security Considerations
 
-```bash
-# View logs from all services
-docker-compose logs -f
+1. **Never commit `.env` file** - Contains sensitive credentials
+2. **Bearer token is hard-coded** - This is NOT production-ready:
+   - Current implementation uses a static `ZOOM_BEARER_TOKEN` in `.env`
+   - Tokens expire and need to be manually updated
+   - For production, implement OAuth 2.0 flow with automatic token refresh
+   - See "Production Deployment" section for proper token management
+3. **Use HTTPS in production** - ngrok provides this automatically
+4. **Validate webhook signatures** - Implemented with `ZOOM_SECRET_TOKEN`
+5. **Prevent duplicate webhooks** - 5-second deduplication window
+6. **Secure RTMS connections** - HMAC signatures for authentication
 
-# View logs from specific service
-docker-compose logs -f rtms
+## Production Deployment
 
-# Restart a specific service
-docker-compose restart backend
+For production deployment:
 
-# Stop all services
-docker-compose down
+1. Replace ngrok with a production domain
+2. Set up SSL certificates (Let's Encrypt)
+3. Configure Redis for session storage (optional)
+4. Set `NODE_ENV=production`
+5. Use environment-specific secrets
+6. **Implement OAuth token management** (CRITICAL):
+   - Replace hard-coded `ZOOM_BEARER_TOKEN` with dynamic token generation
+   - Implement OAuth 2.0 authorization code flow
+   - Add token refresh logic to automatically renew expired tokens
+   - Store tokens securely in encrypted database or secrets manager
+   - Add error handling for token expiration (401 responses)
+   - Implement token rotation for security
+7. Set up monitoring and logging
+8. Configure auto-scaling for RTMS server
 
-# Rebuild and restart
-docker-compose up --build
-```
+## Support
 
-## 📊 How It Works
+For issues or questions:
+1. Check logs: `npm run logs`
+2. Review Zoom Marketplace app configuration
+3. Verify environment variables in `.env`
+4. Check webhook delivery in Marketplace dashboard
 
-1. **User Opens App**: Frontend loads in Zoom (ZCC or Meeting)
-2. **SDK Initialization**: Zoom Apps SDK connects and detects context
-3. **Engagement/Meeting Starts**: Zoom automatically sends RTMS webhook
-4. **RTMS Connection**: Backend forwards webhook to RTMS server
-5. **Audio Capture**: RTMS server joins stream and captures data
-6. **Live Processing**: Audio and transcripts processed in real-time
-7. **Data Storage**: Everything saved to `rtms/data/` directory
-8. **Engagement/Meeting Ends**: RTMS disconnects and finalizes files
+## License
 
-## 🗂️ Data Storage
-
-All captured data is stored in `rtms/data/`:
-
-```
-rtms/data/
-├── audio/
-│   ├── audio_zcc_engagement123_2024-01-15.raw
-│   └── audio_meeting_meeting456_2024-01-15.raw
-└── transcripts/
-    ├── transcript_zcc_engagement123_2024-01-15.txt
-    └── transcript_meeting_meeting456_2024-01-15.txt
-```
-
-## 🔐 Security
-
-- Environment variables for sensitive credentials
-- Security headers middleware (helmet, CSP)
-- CORS configuration for frontend-backend communication
-- Webhook signature verification
-- Session management with secure cookies
-- `.env` file excluded from git (use `.env.example` as template)
-
-## 🐛 Troubleshooting
-
-### Frontend not loading
-- Check if container is running: `docker-compose ps`
-- View logs: `docker-compose logs -f frontend`
-- Verify port 3000 is not in use
-
-### RTMS not receiving webhooks
-- Verify ngrok is running and URL is updated in .env
-- Check Zoom Marketplace webhook subscription
-- View RTMS logs: `docker-compose logs -f rtms`
-- Test endpoint: `POST http://localhost:3001/api/webhooks/test-rtms`
-
-### Audio/Transcripts not captured
-- Ensure RTMS is enabled in your Zoom account settings
-- Check that engagement/meeting has started (not just scheduled)
-- Verify RTMS server connected: Look for "AUDIO IS BEING CAPTURED" in logs
-
-## 📝 Environment Variables
-
-Key environment variables (see [.env.example](.env.example) for complete list):
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ZOOM_APP_CLIENT_ID` | Zoom App Client ID | - |
-| `ZOOM_APP_CLIENT_SECRET` | Zoom App Secret | - |
-| `ZOOM_SECRET_TOKEN` | Webhook verification token | - |
-| `PUBLIC_URL` | Public URL (ngrok) | http://localhost:3001 |
-| `FRONTEND_URL` | Frontend URL | http://localhost:3000 |
-| `RTMS_SERVER_URL` | RTMS server URL | http://localhost:8080 |
-| `NODE_ENV` | Environment | development |
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Commit changes: `git commit -m 'Add feature'`
-4. Push to branch: `git push origin feature-name`
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 🆘 Support
-
-- Check [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- Review Zoom documentation: https://developers.zoom.us
-- Open an issue on GitHub
-
-## 🎉 Acknowledgments
-
-- Built with [@zoom/appssdk](https://www.npmjs.com/package/@zoom/appssdk)
-- RTMS implementation using [@zoom/rtms](https://www.npmjs.com/package/@zoom/rtms)
-- React frontend with Create React App
-
----
-
-**Version**: 1.0.0
-**Last Updated**: December 2024
-**Supports**: Zoom Contact Center & Zoom Meetings
+MIT

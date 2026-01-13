@@ -35,7 +35,7 @@ async function handleRtmsControl(req, res) {
     // Use the specific Zoom Contact Center API endpoint
     const zoomApiUrl = `https://goocicci.zoom.us/v2/contact_center/${engagementId}/rtms_app/status`;
 
-    console.log(`📞 ${action.toUpperCase()} RTMS for engagement: ${engagementId}`);
+    console.log(`${action.toUpperCase()} RTMS for engagement: ${engagementId}`);
     console.log('Zoom API URL:', zoomApiUrl);
 
     const bearerToken = process.env.ZOOM_BEARER_TOKEN;
@@ -63,7 +63,7 @@ async function handleRtmsControl(req, res) {
       }
     );
 
-    console.log(`✅ RTMS ${action} successful:`, response.data);
+    console.log(`RTMS ${action} successful:`, response.data);
 
     res.json({
       success: true,
@@ -72,7 +72,7 @@ async function handleRtmsControl(req, res) {
       data: response.data
     });
   } catch (error) {
-    console.error(`❌ RTMS ${action} failed:`, error.response?.data || error.message);
+    console.error(`RTMS ${action} failed:`, error.response?.data || error.message);
     res.status(error.response?.status || 500).json({
       error: `Failed to ${action} RTMS`,
       details: error.response?.data || error.message

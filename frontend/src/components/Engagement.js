@@ -30,10 +30,10 @@ function Engagement({
       {/* RTMS Status Alert */}
       <div className={`rtms-status-alert ${rtmsActive ? 'capturing' : rtmsStatus}`}>
         <div className="rtms-status-icon">
-          {rtmsActive && '🔴'}
-          {!rtmsActive && rtmsStatus === 'ready' && '🟢'}
-          {rtmsStatus === 'waiting' && '⚪'}
-          {rtmsStatus === 'error' && '🔴'}
+          {rtmsActive && '[REC]'}
+          {!rtmsActive && rtmsStatus === 'ready' && '[READY]'}
+          {rtmsStatus === 'waiting' && '[...]'}
+          {rtmsStatus === 'error' && '[ERROR]'}
         </div>
         <div className="rtms-status-text">
           {rtmsActive && (
@@ -94,20 +94,11 @@ function Engagement({
             disabled={isRtmsLoading || !engagementStarted}
           >
             {isRtmsLoading ? (
-              <>
-                <span className="button-icon">⏳</span>
-                {rtmsActive ? 'Stopping...' : 'Starting...'}
-              </>
+              rtmsActive ? 'Stopping...' : 'Starting...'
             ) : rtmsActive ? (
-              <>
-                <span className="button-icon">⏹</span>
-                Stop RTMS
-              </>
+              'Stop RTMS'
             ) : (
-              <>
-                <span className="button-icon">▶</span>
-                Start RTMS
-              </>
+              'Start RTMS'
             )}
           </button>
           <p className="rtms-hint">
@@ -166,27 +157,6 @@ function Engagement({
               <p><strong>Direction:</strong> {engagementStatus.direction}</p>
             </div>
           )}
-{/* 
-          {consumerContext && (
-            <div className="consumer-section">
-              <h3>Consumer Information</h3>
-              <p><strong>Name:</strong> {consumerContext.consumerName || 'N/A'}</p>
-              <p><strong>Phone:</strong> {consumerContext.consumerPhone || 'N/A'}</p>
-            </div>
-          )} */}
-
-          {/* {engagementContext.consumers && engagementContext.consumers.length > 0 && (
-            <div className="consumers-list">
-              <h3>Consumers</h3>
-              {engagementContext.consumers.map((consumer, index) => (
-                <div key={index} className="consumer-item">
-                  {consumer.consumerName && <p><strong>Name:</strong> {consumer.consumerName}</p>}
-                  {consumer.consumerPhone && <p><strong>Phone:</strong> {consumer.consumerPhone}</p>}
-                  {consumer.consumerEmail && <p><strong>Email:</strong> {consumer.consumerEmail}</p>}
-                </div>
-              ))}
-            </div>
-          )} */}
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { mkdirSync, existsSync, createWriteStream } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import dotenv from 'dotenv';
 import wav from 'wav';
 import express from 'express';
@@ -17,14 +17,12 @@ const PORT = process.env.PORT || 8080;
 const CLIENT_ID = process.env.ZOOM_APP_CLIENT_ID;
 const CLIENT_SECRET = process.env.ZOOM_APP_CLIENT_SECRET;
 
-// console.log('credentials', CLIENT_ID, CLIENT_SECRET)
 
 // Ensure data directories exist
 const dataDir = join(__dirname, 'data');
 const audioDir = join(dataDir, 'audio');
-const transcriptsDir = join(dataDir, 'transcripts');
 
-[dataDir, audioDir, transcriptsDir].forEach(dir => {
+[dataDir, audioDir].forEach(dir => {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -60,7 +58,6 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
     };
 
     ws.send(JSON.stringify(handshake));
-    console.log(`[${engagementId}] Sent signaling handshake`, 'SIGN', generateSignature(engagementId, rtmsStreamId));
   });
 
   ws.on('message', (data) => {
@@ -171,9 +168,7 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
 
 // Handle RTMS started webhook
 function handleRTMSStarted(payload) {
-  console.log('RTMS STARTED')
   const { engagement_id, rtms_stream_id, server_urls } = payload;
-  console.log('DATA', engagement_id, rtms_stream_id)
 
   if (!engagement_id || !rtms_stream_id || !server_urls) {
     console.error('Invalid payload - missing required fields');
@@ -195,7 +190,6 @@ function handleRTMSStarted(payload) {
   const safeId = engagement_id.replace(/[^a-zA-Z0-9]/g, '_');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const audioPath = join(audioDir, `audio_${safeId}_${timestamp}.wav`);
-  const transcriptPath = join(transcriptsDir, `transcript_${safeId}_${timestamp}.txt`);
 
   // Create WAV writer
   const wavWriter = new wav.FileWriter(audioPath, {
@@ -204,20 +198,12 @@ function handleRTMSStarted(payload) {
     bitDepth: 16
   });
 
-  // Create transcript stream
-  const transcriptStream = createWriteStream(transcriptPath, { flags: 'a' });
-  transcriptStream.write(`=== RTMS Transcript Started at ${new Date().toISOString()} ===\n`);
-  transcriptStream.write(`Engagement ID: ${engagement_id}\n`);
-  transcriptStream.write(`Stream ID: ${rtms_stream_id}\n\n`);
-
   // Store engagement data
   const engagementData = {
     engagementId: engagement_id,
     rtmsStreamId: rtms_stream_id,
     wavWriter,
     audioPath,
-    transcriptStream,
-    transcriptPath,
     audioChunkCount: 0,
     startedAt: new Date(),
     signalingWs: null,
@@ -264,13 +250,6 @@ async function cleanupEngagement(engagementId) {
     }
     if (data.mediaWs) {
       data.mediaWs.close();
-    }
-
-    // Close transcript
-    if (data.transcriptStream && data.transcriptStream.writable) {
-      data.transcriptStream.write(`\n=== Transcript Ended at ${new Date().toISOString()} ===\n`);
-      data.transcriptStream.end();
-      console.log(`[${engagementId}] Transcript saved: ${data.transcriptPath}`);
     }
 
     // Close WAV file
@@ -334,12 +313,10 @@ process.on('SIGINT', async () => {
 
 // Start server
 app.listen(PORT, () => {
-  // console.log('\n='.repeat(50));
   console.log('ZCC RTMS Server');
   console.log('='.repeat(50));
   console.log(`Port: ${PORT}`);
   console.log(`Audio directory: ${audioDir}`);
-  console.log(`Transcripts directory: ${transcriptsDir}`);
   console.log('='.repeat(50));
-  console.log('\n✅ Server ready - waiting for webhooks...\n');
+  console.log('\nServer ready - waiting for webhooks...\n');
 });
