@@ -1,31 +1,23 @@
 {
   "name": "rtms-zcc-zoom-app",
   "version": "1.0.0",
-  "description": "Minimal working ZCC RTM Zoom App with OAuth, RTMS, and transcript capture",
+  "description": "Minimal working ZCC RTMS Zoom App - Start/Stop RTMS with OAuth",
   "private": true,
   "scripts": {
-    "preinstall": "echo 'Installing dependencies for all services...'",
-    "install:all": "npm run install:frontend && npm run install:backend && npm run install:rtms && echo 'All dependencies installed'",
-    "install:frontend": "cd frontend && npm install",
-    "install:backend": "cd backend && npm install",
-    "install:rtms": "cd rtms && npm install",
-    "start": "echo 'Starting Docker containers... Access at: http://localhost:3001 | Run ngrok: npm run ngrok' && docker-compose up",
+    "start": "docker-compose up",
     "stop": "docker-compose down",
-    "dev:local": "concurrently -n \"FRONTEND,BACKEND,RTMS\" -c \"cyan,green,magenta\" \"npm run dev:frontend\" \"npm run dev:backend\" \"npm run dev:rtms\"",
-    "dev:frontend": "cd frontend && PORT=3000 npm start",
-    "dev:backend": "cd backend && nodemon server.js",
-    "dev:rtms": "cd rtms && nodemon server.js",
-    "build": "cd frontend && npm run build",
+    "restart": "docker-compose restart",
     "logs": "docker-compose logs -f",
-    "logs:frontend": "docker-compose logs -f frontend",
     "logs:backend": "docker-compose logs -f backend",
+    "logs:frontend": "docker-compose logs -f frontend",
     "logs:rtms": "docker-compose logs -f rtms",
+    "build": "docker-compose build",
     "rebuild": "docker-compose down -v && docker-compose build && docker-compose up",
-    "clean": "docker-compose down -v && docker system prune -f",
-    "clean:data": "rm -rf rtms/data/audio/*",
+    "clean": "docker-compose down -v",
+    "clean:all": "docker-compose down -v && docker system prune -f",
+    "clean:audio": "rm -rf rtms/data/audio/*",
     "health": "curl http://localhost:3001/health",
-    "ngrok": "ngrok http 3001",
-    "test": "cd frontend && npm test"
+    "ngrok": "ngrok http 3001"
   },
   "repository": {
     "type": "git",
@@ -40,17 +32,10 @@
     "zoom-contact-center",
     "zcc"
   ],
-  "author": "Your Name",
+  "author": "",
   "license": "MIT",
-  "devDependencies": {
-    "concurrently": "^8.2.2",
-    "nodemon": "^3.1.11"
-  },
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
-  },
-  "dependencies": {
-    "ws": "^8.19.0"
   }
 }

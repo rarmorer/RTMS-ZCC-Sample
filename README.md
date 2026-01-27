@@ -1,24 +1,23 @@
 # Zoom Contact Center RTMS Audio Capture App
 
-A production-ready Zoom Contact Center application that captures real-time audio from customer engagements using Zoom's Real-Time Media Streams (RTMS) API.
+A simplified Zoom Contact Center application for manually starting and stopping real-time audio capture using Zoom's Real-Time Media Streams (RTMS) API.
 
 ## Overview
 
-This application automatically captures live audio from Zoom Contact Center engagements and saves them as WAV files. The app runs as a containerized microservices architecture with three main components:
+This application provides a simple interface with Start and Stop RTMS buttons to manually control audio capture from Zoom Contact Center engagements. Audio is saved as WAV files. The app runs as a containerized microservices architecture with three main components:
 
-- **Frontend**: React-based Zoom App SDK interface
-- **Backend**: Express API server handling OAuth and webhooks
+- **Frontend**: React-based Zoom App SDK interface with Start/Stop buttons
+- **Backend**: Express API server handling OAuth and RTMS control
 - **RTMS Server**: Real-time media stream processor for audio capture
 
 ## Features
 
-- Automatic audio capture from Zoom Contact Center engagements
+- Manual Start/Stop RTMS controls via simple button interface
 - Real-time WebSocket connection to Zoom media servers
 - WAV file output (16kHz, 16-bit, mono)
 - OAuth 2.0 authentication with Zoom
-- Webhook signature verification for security
+- Webhook event logging in terminal
 - Docker containerization for easy deployment
-- Duplicate webhook prevention
 - Graceful engagement cleanup
 
 ## Architecture
@@ -176,11 +175,13 @@ cp .env.example .env
 
 | Variable | Description | Default | When to Update |
 |----------|-------------|---------|----------------|
-| `PUBLIC_URL` | Public backend URL for webhooks | `http://localhost:3001` | Update with ngrok URL |
+| `PUBLIC_URL` | Public backend URL (main entry point) | `http://localhost:3001` | Update with ngrok URL |
+| `FRONTEND_URL` | OAuth redirect destination (should match PUBLIC_URL) | `http://localhost:3001` | Update with ngrok URL |
 | `ZOOM_REDIRECT_URL` | OAuth callback URL | `http://localhost:3001/api/auth/callback` | Update with ngrok URL |
-| `FRONTEND_URL` | Frontend URL for redirects | `http://localhost:3000` | Keep as localhost |
-| `FRONTEND_INTERNAL_URL` | Docker internal frontend URL | `http://frontend:3000` | Keep as Docker service |
-| `RTMS_SERVER_URL` | RTMS server URL | `http://rtms:8080` | Keep as Docker service |
+| `FRONTEND_INTERNAL_URL` | Docker internal frontend URL | `http://frontend:3000` | Don't change |
+| `RTMS_SERVER_URL` | Docker internal RTMS URL | `http://rtms:8080` | Don't change |
+
+**Important:** In Docker mode, the backend (port 3001) is the only external entry point. It proxies all requests to the frontend container. Both `PUBLIC_URL` and `FRONTEND_URL` should point to the backend URL.
 
 ### Port Configuration
 
@@ -199,19 +200,7 @@ cp .env.example .env
 
 ## Installation
 
-### 1. Clone and Install Dependencies
-
-```bash
-# Install all dependencies
-npm run install:all
-
-# Or install individually
-npm run install:frontend
-npm run install:backend
-npm run install:rtms
-```
-
-### 2. Configure Environment
+### 1. Configure Environment
 
 ```bash
 # Copy example env file
@@ -221,60 +210,96 @@ cp .env.example .env
 nano .env
 ```
 
-### 3. Start with Docker
+### 2. Start with Docker
 
 ```bash
 # Start all services
 npm start
 
-# Or with Docker Compose directly
+# Or use Docker Compose directly
 docker-compose up
 ```
 
-The services will be available at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:3001
-- RTMS Server: http://localhost:8080
+Docker will automatically install all dependencies and start the services:
+- Backend API: http://localhost:3001 (main entry point)
+- Frontend: Internal only (proxied through backend)
+- RTMS Server: Internal only (receives webhooks from backend)
 
-### 4. Setup ngrok for Webhook Testing
+### 3. Setup ngrok for Webhook Testing
 
 In a new terminal:
 
 ```bash
 # Start ngrok tunnel
 npm run ngrok
-
-# Or run ngrok directly
-ngrok http 3001
 ```
 
 Copy the HTTPS URL (e.g., `https://abc123.ngrok-free.app`) and update:
 
-1. **In your `.env` file**:
-   ```
+1. **In your `.env` file** (update these three variables):
+   ```bash
    PUBLIC_URL=https://abc123.ngrok-free.app
+   FRONTEND_URL=https://abc123.ngrok-free.app
    ZOOM_REDIRECT_URL=https://abc123.ngrok-free.app/api/auth/callback
    ```
 
-2. **In Zoom Marketplace**:
-   - Home URL: `https://abc123.ngrok-free.app/api/home`
+2. **In Zoom Marketplace** (update these URLs):
+   - Home URL: `https://abc123.ngrok-free.app`
    - Redirect URL: `https://abc123.ngrok-free.app/api/auth/callback`
    - Event notification URL: `https://abc123.ngrok-free.app/api/webhooks/zoom`
 
-3. **Restart the application** to pick up new environment variables
+3. **Restart the application** to pick up new environment variables:
+   ```bash
+   npm restart
+   ```
+
+## Usage
+
+### Starting Audio Capture
+
+1. Open the Zoom Contact Center app within an active engagement
+2. The app will show:
+   - Engagement Status (Active/Inactive)
+   - Engagement ID
+   - Start RTMS and Stop RTMS buttons
+3. Click **Start RTMS** to begin audio capture
+4. Monitor the RTMS server logs to see audio chunks being received:
+   ```bash
+   npm run logs:rtms
+   ```
+5. Click **Stop RTMS** when you want to stop audio capture
+6. Audio files are saved to `rtms/data/audio/` directory
+
+### Viewing Logs
+
+Watch all services:
+```bash
+npm run logs
+```
+
+Watch specific service:
+```bash
+npm run logs:backend   # See API requests and webhook events
+npm run logs:rtms      # See audio capture progress
+npm run logs:frontend  # See React app logs
+```
 
 ## Application Flow
 
-### 1. Engagement Starts
+### 1. User Starts RTMS
 
 ```
-User receives call in Zoom Contact Center
+User clicks "Start RTMS" button in the app
+         ↓
+Frontend sends POST to /api/zoom/rtms/control with { engagementId, action: 'start' }
+         ↓
+Backend makes API call to Zoom Contact Center
          ↓
 Zoom triggers webhook: contact_center.voice_rtms_started
          ↓
 Backend receives webhook at /api/webhooks/zoom
          ↓
-Backend forwards to RTMS server at http://rtms:8080
+Webhook event logged in backend terminal
          ↓
 RTMS server extracts engagement_id, rtms_stream_id, server_urls
 ```
@@ -309,10 +334,18 @@ Writes to WAV file stream
 WAV file saved at: rtms/data/audio/audio_{engagement_id}_{timestamp}.wav
 ```
 
-### 4. Engagement Ends
+### 4. User Stops RTMS
 
 ```
+User clicks "Stop RTMS" button in the app
+         ↓
+Frontend sends POST to /api/zoom/rtms/control with { engagementId, action: 'stop' }
+         ↓
+Backend makes API call to Zoom Contact Center
+         ↓
 Zoom triggers webhook: contact_center.voice_rtms_stopped
+         ↓
+Backend receives webhook and logs event in terminal
          ↓
 RTMS server closes WebSocket connections
          ↓
@@ -393,17 +426,20 @@ npm stop
 
 | Command | Description |
 |---------|-------------|
-| `npm start` | Start all services with Docker |
+| `npm start` | Start all services with Docker Compose |
 | `npm stop` | Stop all Docker containers |
-| `npm run install:all` | Install dependencies for all services |
-| `npm run dev:local` | Run all services locally (no Docker) |
-| `npm run build` | Build frontend for production |
-| `npm run logs` | View Docker logs |
-| `npm run rebuild` | Rebuild and restart containers |
-| `npm run clean` | Clean Docker volumes and cache |
-| `npm run clean:data` | Delete all audio files |
-| `npm run health` | Check backend health |
-| `npm run ngrok` | Start ngrok tunnel |
+| `npm restart` | Restart all Docker containers |
+| `npm run logs` | View logs from all services |
+| `npm run logs:backend` | View backend logs only |
+| `npm run logs:frontend` | View frontend logs only |
+| `npm run logs:rtms` | View RTMS server logs only |
+| `npm run build` | Build Docker images |
+| `npm run rebuild` | Rebuild and restart all containers |
+| `npm run clean` | Stop containers and remove volumes |
+| `npm run clean:all` | Clean containers, volumes, and Docker cache |
+| `npm run clean:audio` | Delete all captured audio files |
+| `npm run health` | Check backend health endpoint |
+| `npm run ngrok` | Start ngrok tunnel on port 3001 |
 
 ## API Endpoints
 

@@ -9,6 +9,7 @@ const http = require('http');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const { securityHeaders } = require('./middleware/security');
+const { handleRtmsControl } = require('./controllers/zoomController');
 
 const app = express();
 const server = http.createServer(app);
@@ -58,6 +59,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Check authentication status
+app.get('/api/auth/status', (req, res) => {
+  const isAuthenticated = !!(req.session.accessToken && req.session.authenticated);
+  res.json({
+    authenticated: isAuthenticated,
+    hasToken: !!req.session.accessToken
+  });
+});
+
 // Debug: Log all incoming requests to /api/webhooks/zoom
 app.use('/api/webhooks/zoom', (req, _res, next) => {
   console.log('Webhook request received');
@@ -84,7 +94,7 @@ app.get('/api/auth/authorize', (req, res) => {
   const params = new URLSearchParams({
     grant_type: 'authorization_code',
     code: code,
-    redirect_uri: process.env.ZOOM_REDIRECT_URL || `${process.env.PUBLIC_URL}/api/auth/callback`
+    redirect_uri: process.env.ZOOM_REDIRECT_URL || `${process.env.PUBLIC_URL}/api/auth`
   });
 
   const authHeader = Buffer.from(
@@ -148,13 +158,18 @@ app.get('/api/auth/callback', async (req, res) => {
     // Store tokens in session
     req.session.accessToken = access_token;
     req.session.refreshToken = refresh_token;
+    req.session.authenticated = true;
     await req.session.save();
 
-    // Redirect back to app
-    res.redirect(process.env.FRONTEND_URL || 'http://localhost:3000');
+    // Redirect back to app with success indicator
+    const redirectUrl = new URL(process.env.FRONTEND_URL || 'http://localhost:3000');
+    redirectUrl.searchParams.set('auth', 'success');
+    res.redirect(redirectUrl.toString());
   } catch (error) {
     console.error('OAuth callback error:', error.response?.data || error.message);
-    res.status(500).send('Authentication failed');
+    const redirectUrl = new URL(process.env.FRONTEND_URL || 'http://localhost:3000');
+    redirectUrl.searchParams.set('auth', 'error');
+    res.redirect(redirectUrl.toString());
   }
 });
 
@@ -228,6 +243,9 @@ app.post('/api/webhooks/zoom', async (req, res) => {
 
   res.status(200).json({ received: true });
 });
+
+// RTMS Control endpoint
+app.post('/api/zoom/rtms/control', handleRtmsControl);
 
 // Proxy endpoint for Zoom API calls
 app.all('/api/zoom/*', async (req, res) => {

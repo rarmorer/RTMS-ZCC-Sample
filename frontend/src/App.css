@@ -87,6 +87,15 @@
   color: #c62828;
 }
 
+.success-box {
+  background: #e8f5e9;
+  border-left: 4px solid #4caf50;
+  padding: 15px;
+  margin: 20px 30px;
+  border-radius: 4px;
+  color: #2e7d32;
+}
+
 .message-box {
   background: #e8f5e9;
   border-left: 4px solid #4caf50;
@@ -226,6 +235,8 @@
 
 .action-group {
   margin-top: 15px;
+  display: flex;
+  gap: 10px;
 }
 
 .action-hint {
@@ -247,13 +258,18 @@
   min-width: 150px;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.btn:active {
+.btn:active:not(:disabled) {
   transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-primary {

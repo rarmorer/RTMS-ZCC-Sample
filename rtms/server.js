@@ -45,6 +45,8 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
   engagementData.signalingWs = ws;
 
   ws.on('open', () => {
+    console.log(`[${engagementId}] Signaling WebSocket connected`);
+
     const handshake = {
       msg_type: 1,
       protocol_version: 1,
@@ -63,10 +65,13 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
     if (message.msg_type === 2) {
       // Signaling handshake response
       if (message.status_code === 0) {
+        console.log(`[${engagementId}] Signaling handshake successful`);
         const mediaUrl = message.media_server?.server_urls?.audio || message.media_server?.server_urls?.all;
         if (mediaUrl) {
           connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, ws, engagementData);
         }
+      } else {
+        console.error(`[${engagementId}] Signaling handshake failed:`, message.reason);
       }
     } else if (message.msg_type === 12) {
       // Keep-alive request
@@ -75,11 +80,11 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
   });
 
   ws.on('error', (error) => {
-    console.error(`Signaling WebSocket error:`, error.message);
+    console.error(`[${engagementId}] Signaling WebSocket error:`, error.message);
   });
 
-  ws.on('close', () => {
-    // Signaling connection closed
+  ws.on('close', (code, reason) => {
+    console.log(`[${engagementId}] Signaling WebSocket closed (code: ${code})`);
   });
 }
 
@@ -89,6 +94,8 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
   engagementData.mediaWs = ws;
 
   ws.on('open', () => {
+    console.log(`[${engagementId}] Media WebSocket connected`);
+
     const handshake = {
       msg_type: 3,
       protocol_version: 1,
@@ -110,6 +117,7 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
     };
 
     ws.send(JSON.stringify(handshake));
+    console.log(`[${engagementId}] Sent media handshake`);
   });
 
   ws.on('message', (data) => {
@@ -118,29 +126,42 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
     if (message.msg_type === 4) {
       // Media handshake response
       if (message.status_code === 0) {
+        console.log(`[${engagementId}] Media handshake successful`);
+
         // Send CLIENT_READY_ACK to signaling connection
         signalingWs.send(JSON.stringify({
           msg_type: 7,
           rtms_stream_id: rtmsStreamId
         }));
+
+        console.log(`[${engagementId}] Ready to receive audio`);
+      } else {
+        console.error(`[${engagementId}] Media handshake failed:`, message.reason);
       }
     } else if (message.msg_type === 12) {
       // Keep-alive request
       ws.send(JSON.stringify({ msg_type: 13, timestamp: message.timestamp }));
     } else if (message.msg_type === 14) {
       // Audio data
-      const audioBuffer = Buffer.from(message.content.data, 'base64');
-      engagementData.wavWriter.write(audioBuffer);
+      const { channel_id, data: audioDataBase64, timestamp } = message.content;
       engagementData.audioChunkCount++;
+
+      // Write audio to WAV file
+      const audioBuffer = Buffer.from(audioDataBase64, 'base64');
+      engagementData.wavWriter.write(audioBuffer);
+
+      if (engagementData.audioChunkCount % 50 === 0) {
+        console.log(`[${engagementId}] Received ${engagementData.audioChunkCount} audio chunks`);
+      }
     }
   });
 
   ws.on('error', (error) => {
-    console.error(`Media WebSocket error:`, error.message);
+    console.error(`[${engagementId}] Media WebSocket error:`, error.message);
   });
 
-  ws.on('close', () => {
-    // Media connection closed
+  ws.on('close', (code) => {
+    console.log(`[${engagementId}] Media WebSocket closed (code: ${code})`);
   });
 }
 
@@ -155,15 +176,18 @@ function handleRTMSStarted(payload) {
 
   // Check for duplicate
   if (activeEngagements.has(engagement_id)) {
+    console.warn(`[${engagement_id}] Connection already exists, skipping`);
     return;
   }
 
   // Reserve this engagement_id immediately to prevent race condition
   activeEngagements.set(engagement_id, { reservedAt: new Date() });
 
+  console.log(`[${engagement_id}] Starting RTMS connection`);
+
   // Setup file paths
   const safeId = engagement_id.replace(/[^a-zA-Z0-9]/g, '_');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const timestamp = new Date().toISOString().replace(/[:. ]/g, '-');
   const audioPath = join(audioDir, `audio_${safeId}_${timestamp}.wav`);
 
   // Create WAV writer
@@ -205,6 +229,7 @@ async function handleRTMSStopped(payload) {
     return;
   }
 
+  console.log(`[${engagement_id}] Stopping RTMS`);
   await cleanupEngagement(engagement_id);
 }
 
@@ -213,6 +238,7 @@ async function cleanupEngagement(engagementId) {
   const data = activeEngagements.get(engagementId);
 
   if (!data) {
+    console.warn(`[${engagementId}] No active connection found`);
     return;
   }
 
@@ -233,12 +259,14 @@ async function cleanupEngagement(engagementId) {
           else resolve();
         });
       });
-      console.log(`Audio saved: ${data.audioPath} (${data.audioChunkCount} chunks)`);
+      console.log(`[${engagementId}] Audio saved: ${data.audioPath}`);
+      console.log(`[${engagementId}] Total audio chunks: ${data.audioChunkCount}`);
     }
   } catch (error) {
-    console.error(`Cleanup error:`, error.message);
+    console.error(`[${engagementId}] Cleanup error:`, error.message);
   } finally {
     activeEngagements.delete(engagementId);
+    console.log(`[${engagementId}] Cleaned up`);
   }
 }
 
@@ -250,6 +278,8 @@ app.use(express.json());
 app.post('/', (req, res) => {
   const { event, payload } = req.body;
 
+  console.log(`\n[Webhook] Event: ${event}`);
+
   if (event === 'contact_center.voice_rtms_started') {
     handleRTMSStarted(payload);
     res.status(200).json({ received: true });
@@ -257,6 +287,7 @@ app.post('/', (req, res) => {
     handleRTMSStopped(payload);
     res.status(200).json({ received: true });
   } else {
+    console.log(`[Webhook] Unknown event: ${event}`);
     res.status(200).json({ received: true });
   }
 });
@@ -272,7 +303,7 @@ app.get('/health', (req, res) => {
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('Shutting down...');
+  console.log('\n\nShutting down...');
   for (const [engagementId] of activeEngagements.entries()) {
     await cleanupEngagement(engagementId);
   }
@@ -286,5 +317,5 @@ app.listen(PORT, () => {
   console.log(`Port: ${PORT}`);
   console.log(`Audio directory: ${audioDir}`);
   console.log('='.repeat(50));
-  console.log('Server ready - waiting for webhooks');
+  console.log('\nServer ready - waiting for webhooks...\n');
 });
