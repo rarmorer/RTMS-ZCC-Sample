@@ -1,6 +1,23 @@
 version: '3.8'
 
 services:
+  # Redis for session storage
+  redis:
+    image: redis:7-alpine
+    container_name: zcc-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - zcc-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Backend API server (port 3001 - for ngrok)
   backend:
     build:
@@ -21,6 +38,7 @@ services:
       - RTMS_SERVER_URL=http://rtms:8080
       - ZOOM_REDIRECT_URL=${ZOOM_REDIRECT_URL}
       - SESSION_SECRET=${SESSION_SECRET}
+      - REDIS_URL=redis://redis:6379
       - NODE_ENV=${NODE_ENV:-development}
     volumes:
       # Mount source code for hot reload
@@ -32,8 +50,12 @@ services:
     networks:
       - zcc-network
     depends_on:
-      - frontend
-      - rtms
+      redis:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+      rtms:
+        condition: service_started
 
   # Frontend React dev server (port 3000 - internal only)
   frontend:
@@ -91,3 +113,4 @@ volumes:
   frontend-node-modules:
   backend-node-modules:
   rtms-node-modules:
+  redis-data:

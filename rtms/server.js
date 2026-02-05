@@ -75,7 +75,11 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
       } else {
         console.error(`[${engagementId}] Signaling handshake failed:`, message.reason);
       }
-    } else if (message.msg_type === 12) {
+    } else if (message.msg_type === 6) {
+      // Event subscription response
+        console.log(message);
+    
+    }else if (message.msg_type === 12) {
       // Keep-alive request
       ws.send(JSON.stringify({ msg_type: 13, timestamp: message.timestamp }));
     }
@@ -133,6 +137,10 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
         // Send CLIENT_READY_ACK to signaling connection
         signalingWs.send(JSON.stringify({
           msg_type: 7,
+          rtms_stream_id: rtmsStreamId
+        }));
+        signalingWs.send(JSON.stringify({
+          msg_type: 5,
           rtms_stream_id: rtmsStreamId
         }));
 

@@ -1,4 +1,5 @@
-const axios = require('axios');
+const { zoomApiRequest } = require('../helpers/zoom-api');
+const { getTokens } = require('../helpers/token-store');
 
 /**
  * Handle RTMS control - Start/Stop RTMS for an engagement
@@ -9,7 +10,6 @@ async function handleRtmsControl(req, res) {
 
   const { engagementId, action } = req.body;
   const clientId = process.env.ZOOM_APP_CLIENT_ID;
-  const bearerToken = process.env.ZOOM_BEARER_TOKEN;
 
   if (!engagementId || !action) {
     console.error('Missing required fields:', { engagementId, action });
@@ -18,10 +18,24 @@ async function handleRtmsControl(req, res) {
     });
   }
 
-  if (!bearerToken) {
-    console.error('ZOOM_BEARER_TOKEN not configured in environment');
-    return res.status(500).json({
-      error: 'Server configuration error: Bearer token not found'
+  // Try to get tokens from session first, then fall back to global storage
+  const globalTokens = getTokens();
+  const tokens = {
+    accessToken: req.session.accessToken || globalTokens.accessToken,
+    refreshToken: req.session.refreshToken || globalTokens.refreshToken
+  };
+
+  console.log('Token check:', {
+    hasSessionToken: !!req.session.accessToken,
+    hasGlobalToken: !!globalTokens.accessToken,
+    usingToken: !!tokens.accessToken
+  });
+
+  if (!tokens.accessToken) {
+    console.error('User not authenticated - no access token available');
+    return res.status(401).json({
+      error: 'Not authenticated',
+      message: 'Please authenticate with Zoom first'
     });
   }
 
@@ -46,32 +60,41 @@ async function handleRtmsControl(req, res) {
     console.log(`${action.toUpperCase()} RTMS for engagement: ${engagementId}`);
     console.log('Zoom API URL:', zoomApiUrl);
 
-    const response = await axios.put(
-      zoomApiUrl,
-      {
+    // Use zoomApiRequest for automatic token refresh
+    const data = await zoomApiRequest({
+      method: 'PUT',
+      url: zoomApiUrl,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      data: {
         action: action,
         settings: {
           client_id: clientId
         }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${bearerToken}`,
-          'Content-Type': 'application/json'
-        }
       }
-    );
+    }, tokens);
 
-    console.log(`RTMS ${action} successful:`, response.data);
+    console.log(`RTMS ${action} successful:`, data);
 
     res.json({
       success: true,
       action: action,
       engagementId: engagementId,
-      data: response.data
+      data: data
     });
   } catch (error) {
     console.error(`RTMS ${action} failed:`, error.response?.data || error.message);
+
+    // If authentication failed after refresh attempt, return 401
+    if (error.message === 'Authentication failed - please re-authenticate') {
+      return res.status(401).json({
+        error: 'Authentication expired',
+        message: 'Please re-authenticate with Zoom',
+        needsAuth: true
+      });
+    }
+
     res.status(error.response?.status || 500).json({
       error: `Failed to ${action} RTMS`,
       details: error.response?.data || error.message

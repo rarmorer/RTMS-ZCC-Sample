@@ -105,64 +105,49 @@ docker-compose restart
 **Activation Tab:**
 - Install the app to your account
 
-### Generate Bearer Token (Manual OAuth)
+### OAuth Authentication & Token Storage
 
-To generate a bearer token for API calls:
+The app uses OAuth 2.0 for authentication with automatic token refresh:
 
-1. **Get the Authorization Code**
-   - Install your app from the Zoom Marketplace
-   - When redirected to your callback URL, copy the `code` parameter from the URL
-   - Example: `https://your-ngrok-url.ngrok-free.app/api/auth/callback?code=AUTHORIZATION_CODE`
+#### How It Works
 
-2. **Exchange Code for Access Token** (using Postman or similar tool)
+1. **Initial Authentication**
+   - Install the app from Zoom Marketplace
+   - The OAuth flow opens in a new window/tab
+   - After authorizing, tokens are stored server-side in global storage
+   - You'll be redirected back to the app
 
-   Make a POST request to get your access and refresh tokens:
+2. **Why Global Token Storage?**
+   - Zoom Apps run inside an iframe within the Zoom client
+   - Modern browsers block third-party cookies in iframes for security
+   - Session cookies don't work in this environment
+   - **Solution**: Tokens are stored globally on the server (in-memory)
+   - All API requests from the iframe use these globally stored tokens
 
-
+3. **Token Storage Architecture**
    ```
-   POST https://zoom.us/oauth/token
-
-   Headers:
-   - Authorization: Basic BASE64(CLIENT_ID:CLIENT_SECRET)
-   - Content-Type: application/x-www-form-urlencoded
-
-   Body:
-   - grant_type=authorization_code
-   - code=YOUR_AUTHORIZATION_CODE
-   - redirect_uri=https://your-ngrok-url.ngrok-free.app/api/auth/
-   ```
-
-   Response will include:
-   ```json
-   {
-     "access_token": "eyJhbGc...",
-     "token_type": "bearer",
-     "refresh_token": "eyJhbGc...",
-     "expires_in": 3600
-   }
+   OAuth Callback → Global Token Store (server-side)
+                         ↓
+   Zoom App (iframe) → API Request → Use Global Tokens
    ```
 
-3. **Add to Environment File**
-   - Copy the `access_token` value
-   - Add it to your `.env` file as `ZOOM_BEARER_TOKEN`
+4. **Automatic Token Refresh**
+   - When an access token expires (401 error), the app automatically:
+     - Uses the refresh token to get a new access token
+     - Updates the global token store with new tokens
+     - Retries the failed request seamlessly
+   - No user interaction needed!
 
-4. **Refresh Token When Expired**
+5. **Production Considerations**
+   - Current implementation: In-memory global storage (single user)
+   - For multi-user production: Store tokens in Redis keyed by user/account ID
+   - Token store module location: `backend/helpers/token-store.js`
 
-   Access tokens expire after 1 hour. To get a new access token, use the refresh token:
+6. **Re-authentication**
+   - If refresh token expires, you'll see "Not authenticated" error
+   - Simply reinstall/reauthorize the app from Zoom Marketplace
 
-   ```
-   POST https://zoom.us/oauth/token
-
-   Headers:
-   - Authorization: Basic BASE64(CLIENT_ID:CLIENT_SECRET)
-   - Content-Type: application/x-www-form-urlencoded
-
-   Body:
-   - grant_type=refresh_token
-   - refresh_token=YOUR_REFRESH_TOKEN
-   ```
-
-   See [Zoom OAuth documentation](https://developers.zoom.us/docs/integrations/oauth/#app-type-general) for more details.
+See [Zoom OAuth documentation](https://developers.zoom.us/docs/integrations/oauth/#app-type-general) for more details.
 
 ## Usage
 
@@ -194,8 +179,9 @@ Status messages appear in the terminal-style display:
 - If webhook received but buttons still greyed: Check browser console for errors
 
 **Can't start RTMS after buttons enabled?**
-- Verify `ZOOM_BEARER_TOKEN` is set in `.env`
+- Ensure you're authenticated with Zoom (check for "Connect to Zoom" button)
 - View backend logs: `docker-compose logs -f backend`
+- Check for "Authentication expired" errors - if present, re-authenticate
 
 **Status messages not appearing?**
 - Check RTMS server logs: `docker-compose logs -f rtms`

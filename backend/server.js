@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const session = require('express-session');
+const { RedisStore } = require('connect-redis');
+const { createClient } = require('redis');
 const axios = require('axios');
 const crypto = require('crypto');
 const path = require('path');
@@ -10,9 +12,15 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const { securityHeaders } = require('./middleware/security');
 const { handleRtmsControl } = require('./controllers/zoomController');
+const { zoomApiRequest } = require('./helpers/zoom-api');
+const { setTokens, getTokens } = require('./helpers/token-store');
 
 const app = express();
 const server = http.createServer(app);
+
+// Trust proxy - required for ngrok and other reverse proxies
+// This allows Express to trust X-Forwarded-* headers for proper cookie handling
+app.set('trust proxy', 1);
 
 const PORT = process.env.BACKEND_PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -34,15 +42,48 @@ app.use(express.urlencoded({ extended: true }));
 // 3. Security headers AFTER CORS
 app.use(securityHeaders);
 
-// Session configuration
+// Initialize Redis client
+const redisClient = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379',
+  socket: {
+    connectTimeout: 5000,
+    reconnectStrategy: (retries) => {
+      if (retries > 10) {
+        console.error('Redis max reconnection attempts reached');
+        return new Error('Redis max reconnection attempts reached');
+      }
+      return Math.min(retries * 100, 3000);
+    }
+  }
+});
+
+redisClient.on('error', (err) => {
+  console.error('Redis Client Error:', err);
+});
+
+redisClient.on('connect', () => {
+  console.log('Redis client connected');
+});
+
+redisClient.on('ready', () => {
+  console.log('Redis client ready');
+});
+
+// Connect to Redis
+redisClient.connect().catch(console.error);
+
+// Session configuration with Redis store
 app.use(session({
+  store: new RedisStore({ client: redisClient }),
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // Set to false for ngrok testing (ngrok terminates SSL)
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    sameSite: 'lax', // Allow cross-site requests for ngrok
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    path: '/' // Ensure cookie is sent for all paths
   }
 }));
 
@@ -60,11 +101,13 @@ app.get('/health', (req, res) => {
 });
 
 // Check authentication status
-app.get('/api/auth/status', (req, res) => {
-  const isAuthenticated = !!(req.session.accessToken && req.session.authenticated);
+app.get('/api/auth/status', (_req, res) => {
+  const tokens = getTokens();
+  const isAuthenticated = !!tokens.accessToken;
+
   res.json({
     authenticated: isAuthenticated,
-    hasToken: !!req.session.accessToken
+    hasToken: !!tokens.accessToken
   });
 });
 
@@ -79,51 +122,6 @@ app.use('/api/webhooks/zoom', (req, _res, next) => {
 app.get('/api/home', (req, res) => {
   // Redirect to root - the proxy will handle serving the frontend
   res.redirect('/');
-});
-
-// OAuth: Authorize endpoint
-app.get('/api/auth/authorize', (req, res) => {
-  const { code, state } = req.query;
-
-  if (!code) {
-    return res.status(400).json({ error: 'Missing authorization code' });
-  }
-
-  // Exchange code for tokens
-  const tokenUrl = `${process.env.ZOOM_HOST || 'https://zoom.us'}/oauth/token`;
-  const params = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code: code,
-    redirect_uri: process.env.ZOOM_REDIRECT_URL || `${process.env.PUBLIC_URL}/api/auth`
-  });
-
-  const authHeader = Buffer.from(
-    `${process.env.ZOOM_APP_CLIENT_ID}:${process.env.ZOOM_APP_CLIENT_SECRET}`
-  ).toString('base64');
-
-  axios.post(tokenUrl, params.toString(), {
-    headers: {
-      'Authorization': `Basic ${authHeader}`,
-      'Content-Type': 'application/x-www-form-urlencoded'
-    }
-  })
-  .then(response => {
-    const { access_token, refresh_token } = response.data;
-
-    // Store tokens in session
-    req.session.accessToken = access_token;
-    req.session.refreshToken = refresh_token;
-    req.session.save();
-
-    res.json({ success: true, message: 'Authorization successful' });
-  })
-  .catch(error => {
-    console.error('Token exchange error:', error.response?.data || error.message);
-    res.status(500).json({
-      error: 'Failed to exchange authorization code',
-      details: error.response?.data || error.message
-    });
-  });
 });
 
 // OAuth: Callback endpoint
@@ -153,22 +151,31 @@ app.get('/api/auth/callback', async (req, res) => {
       }
     });
 
-    const { access_token, refresh_token } = response.data;
+    const { access_token, refresh_token, expires_in } = response.data;
 
-    // Store tokens in session
-    req.session.accessToken = access_token;
-    req.session.refreshToken = refresh_token;
-    req.session.authenticated = true;
-    await req.session.save();
+    // Store tokens in global storage (session cookies don't work in Zoom iframe)
+    setTokens({
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      expiresAt: Date.now() + ((expires_in || 3600) * 1000)
+    });
+
+    console.log('OAuth successful - Tokens saved to global store');
 
     // Redirect back to app with success indicator
     const redirectUrl = new URL(process.env.FRONTEND_URL || 'http://localhost:3000');
     redirectUrl.searchParams.set('auth', 'success');
     res.redirect(redirectUrl.toString());
   } catch (error) {
-    console.error('OAuth callback error:', error.response?.data || error.message);
+    console.error('OAuth callback error - Full error:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      stack: error.stack
+    });
     const redirectUrl = new URL(process.env.FRONTEND_URL || 'http://localhost:3000');
     redirectUrl.searchParams.set('auth', 'error');
+    redirectUrl.searchParams.set('error_message', encodeURIComponent(error.message));
     res.redirect(redirectUrl.toString());
   }
 });
@@ -334,11 +341,11 @@ app.post('/api/webhooks/zoom', async (req, res) => {
 // RTMS Control endpoint
 app.post('/api/zoom/rtms/control', handleRtmsControl);
 
-// Proxy endpoint for Zoom API calls
+// Proxy endpoint for Zoom API calls with automatic token refresh
 app.all('/api/zoom/*', async (req, res) => {
-  const accessToken = req.session.accessToken;
+  const tokens = getTokens();
 
-  if (!accessToken) {
+  if (!tokens.accessToken) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
@@ -346,20 +353,29 @@ app.all('/api/zoom/*', async (req, res) => {
   const zoomUrl = `https://api.zoom.us/v2/${zoomPath}`;
 
   try {
-    const response = await axios({
+    const data = await zoomApiRequest({
       method: req.method,
       url: zoomUrl,
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
       data: req.body,
       params: req.query
-    });
+    }, tokens);
 
-    res.json(response.data);
+    res.json(data);
   } catch (error) {
     console.error('Zoom API proxy error:', error.response?.data || error.message);
+
+    // If authentication failed after refresh attempt, return 401
+    if (error.message === 'Authentication failed - please re-authenticate') {
+      return res.status(401).json({
+        error: 'Authentication expired',
+        message: 'Please re-authenticate with Zoom',
+        needsAuth: true
+      });
+    }
+
     res.status(error.response?.status || 500).json({
       error: 'Zoom API request failed',
       details: error.response?.data || error.message
