@@ -19,7 +19,7 @@ async function handleRtmsControl(req, res) {
   }
 
   // Try to get tokens from session first, then fall back to global storage
-  const globalTokens = getTokens();
+  const globalTokens = await getTokens();
   const tokens = {
     accessToken: req.session.accessToken || globalTokens.accessToken,
     refreshToken: req.session.refreshToken || globalTokens.refreshToken

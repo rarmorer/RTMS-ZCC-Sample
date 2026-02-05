@@ -76,13 +76,13 @@ async function zoomApiRequest(options, tokens) {
         const tokenData = await refreshAccessToken(tokens.refreshToken);
 
         // Update global token store with new tokens
-        setTokens({
+        await setTokens({
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
           expiresAt: Date.now() + ((tokenData.expires_in || 3600) * 1000)
         });
 
-        console.log('Token refreshed successfully');
+        console.log('Token refreshed successfully and saved to Redis');
 
         // Retry the original request with new token
         const retryResponse = await axios({

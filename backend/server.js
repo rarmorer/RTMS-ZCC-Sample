@@ -101,8 +101,8 @@ app.get('/health', (req, res) => {
 });
 
 // Check authentication status
-app.get('/api/auth/status', (_req, res) => {
-  const tokens = getTokens();
+app.get('/api/auth/status', async (_req, res) => {
+  const tokens = await getTokens();
   const isAuthenticated = !!tokens.accessToken;
 
   res.json({
@@ -154,13 +154,13 @@ app.get('/api/auth/callback', async (req, res) => {
     const { access_token, refresh_token, expires_in } = response.data;
 
     // Store tokens in global storage (session cookies don't work in Zoom iframe)
-    setTokens({
+    await setTokens({
       accessToken: access_token,
       refreshToken: refresh_token,
       expiresAt: Date.now() + ((expires_in || 3600) * 1000)
     });
 
-    console.log('OAuth successful - Tokens saved to global store');
+    console.log('OAuth successful - Tokens saved to Redis');
 
     // Redirect back to app with success indicator
     const redirectUrl = new URL(process.env.FRONTEND_URL || 'http://localhost:3000');
@@ -343,7 +343,7 @@ app.post('/api/zoom/rtms/control', handleRtmsControl);
 
 // Proxy endpoint for Zoom API calls with automatic token refresh
 app.all('/api/zoom/*', async (req, res) => {
-  const tokens = getTokens();
+  const tokens = await getTokens();
 
   if (!tokens.accessToken) {
     return res.status(401).json({ error: 'Not authenticated' });

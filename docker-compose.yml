@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Redis for session storage
+  # Redis for session storage and OAuth token persistence
   redis:
     image: redis:7-alpine
     container_name: zcc-redis

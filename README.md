@@ -121,29 +121,36 @@ The app uses OAuth 2.0 for authentication with automatic token refresh:
    - Zoom Apps run inside an iframe within the Zoom client
    - Modern browsers block third-party cookies in iframes for security
    - Session cookies don't work in this environment
-   - **Solution**: Tokens are stored globally on the server (in-memory)
-   - All API requests from the iframe use these globally stored tokens
+   - **Solution**: Tokens are stored in Redis on the server
+   - All API requests from the iframe use these Redis-stored tokens
 
 3. **Token Storage Architecture**
    ```
-   OAuth Callback → Global Token Store (server-side)
+   OAuth Callback → Redis (key: "oauth:tokens")
                          ↓
-   Zoom App (iframe) → API Request → Use Global Tokens
+   Zoom App (iframe) → API Request → Get Tokens from Redis
    ```
 
 4. **Automatic Token Refresh**
    - When an access token expires (401 error), the app automatically:
      - Uses the refresh token to get a new access token
-     - Updates the global token store with new tokens
+     - Updates Redis with new tokens
      - Retries the failed request seamlessly
    - No user interaction needed!
 
-5. **Production Considerations**
-   - Current implementation: In-memory global storage (single user)
-   - For multi-user production: Store tokens in Redis keyed by user/account ID
-   - Token store module location: `backend/helpers/token-store.js`
+5. **Benefits of Redis Storage**
+   - ✅ Tokens persist across server restarts
+   - ✅ Works with Docker container restarts
+   - ✅ No need to re-authenticate after deployments
+   - ✅ Can scale to multiple backend instances (with proper key strategy)
 
-6. **Re-authentication**
+6. **Production Considerations**
+   - Current implementation: Redis storage with key `"oauth:tokens"` (single user)
+   - For multi-user production: Update Redis key to include user/account ID (e.g., `oauth:tokens:{userId}`)
+   - Token store module location: `backend/helpers/token-store.js`
+   - Redis persistence: Uses AOF (Append Only File) for data durability
+
+7. **Re-authentication**
    - If refresh token expires, you'll see "Not authenticated" error
    - Simply reinstall/reauthorize the app from Zoom Marketplace
 
