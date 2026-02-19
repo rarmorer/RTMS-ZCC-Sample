@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, createWriteStream } from 'fs';
 import dotenv from 'dotenv';
 import wav from 'wav';
 import express from 'express';
@@ -141,7 +141,10 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
     } else if (message.msg_type === 14) {
       // Audio data
       const audioBuffer = Buffer.from(message.content.data, 'base64');
+
+      // Write to both WAV and raw PCM files
       engagementData.wavWriter.write(audioBuffer);
+      engagementData.pcmWriter.write(audioBuffer);
       engagementData.audioChunkCount++;
 
       // Log audio chunk reception every 100 chunks
@@ -178,23 +181,41 @@ function handleRTMSStarted(payload) {
   activeEngagements.set(engagement_id, { reservedAt: new Date() });
 
   // Setup file paths
-  const safeId = engagement_id.replace(/[^a-zA-Z0-9]/g, '_');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const audioPath = join(audioDir, `audio_${safeId}_${timestamp}.wav`);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  const baseFilename = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+
+  // Create both WAV and raw PCM files
+  const wavPath = join(audioDir, `${baseFilename}.wav`);
+  const pcmPath = join(audioDir, `${baseFilename}.pcm`);
 
   // Create WAV writer
-  const wavWriter = new wav.FileWriter(audioPath, {
+  const wavWriter = new wav.FileWriter(wavPath, {
     sampleRate: 16000,
     channels: 1,
     bitDepth: 16
   });
+
+  // Create raw PCM writer
+  const pcmWriter = createWriteStream(pcmPath);
+
+  console.log(`🎙️  Recording to:`);
+  console.log(`   WAV: ${wavPath}`);
+  console.log(`   PCM: ${pcmPath} (play with: ffplay -f s16le -ar 16000 -ac 1 ${baseFilename}.pcm)`);
 
   // Store engagement data
   const engagementData = {
     engagementId: engagement_id,
     rtmsStreamId: rtms_stream_id,
     wavWriter,
-    audioPath,
+    pcmWriter,
+    wavPath,
+    pcmPath,
     audioChunkCount: 0,
     startedAt: new Date(),
     signalingWs: null,
@@ -249,8 +270,26 @@ async function cleanupEngagement(engagementId) {
           else resolve();
         });
       });
-      console.log(`Audio saved: ${data.audioPath} (${data.audioChunkCount} chunks)`);
     }
+
+    // Close PCM file
+    if (data.pcmWriter) {
+      await new Promise((resolve, reject) => {
+        data.pcmWriter.end((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
+
+    console.log('='.repeat(60));
+    console.log('📁 Recording saved');
+    console.log('='.repeat(60));
+    console.log(`WAV: ${data.wavPath}`);
+    console.log(`PCM: ${data.pcmPath}`);
+    console.log(`Chunks: ${data.audioChunkCount}`);
+    console.log(`\nPlay PCM with: ffplay -f s16le -ar 16000 -ac 1 ${data.pcmPath}`);
+    console.log('='.repeat(60));
   } catch (error) {
     console.error(`Cleanup error:`, error.message);
   } finally {
