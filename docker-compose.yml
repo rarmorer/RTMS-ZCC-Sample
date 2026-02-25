@@ -9,19 +9,11 @@ services:
     container_name: zcc-backend
     ports:
       - "127.0.0.1:3001:3001"
+    env_file:
+      - ./.env
     environment:
-      - BACKEND_PORT=3001
-      - ZOOM_APP_CLIENT_ID=${ZOOM_APP_CLIENT_ID}
-      - ZOOM_APP_CLIENT_SECRET=${ZOOM_APP_CLIENT_SECRET}
-      - ZOOM_HOST=${ZOOM_HOST:-https://zoom.us}
-      - ZOOM_SECRET_TOKEN=${ZOOM_SECRET_TOKEN}
-      - PUBLIC_URL=${PUBLIC_URL}
-      - FRONTEND_URL=${PUBLIC_URL}
-      - FRONTEND_INTERNAL_URL=http://frontend:3000
+      # Docker service name overrides (differ from .env localhost values)
       - RTMS_SERVER_URL=http://rtms:8080
-      - ZOOM_REDIRECT_URL=${ZOOM_REDIRECT_URL}
-      - SESSION_SECRET=${SESSION_SECRET}
-      - NODE_ENV=${NODE_ENV:-development}
     volumes:
       # Mount source code for hot reload
       - ./backend:/app:delegated
@@ -42,9 +34,11 @@ services:
       dockerfile: Dockerfile
     container_name: zcc-frontend
     # No external port mapping - accessed through backend proxy
+    env_file:
+      - ./.env
     environment:
+      # Docker-specific overrides
       - REACT_APP_BACKEND_URL=/api
-      - REACT_APP_ZOOM_CLIENT_ID=${REACT_APP_ZOOM_CLIENT_ID}
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
       - WDS_SOCKET_PORT=0
@@ -67,12 +61,12 @@ services:
     container_name: zcc-rtms
     platform: linux/amd64
     # No external port mapping - accessed through backend
+    env_file:
+      - ./.env
     environment:
+      # Docker service name overrides (differ from .env localhost values)
       - PORT=8080
-      - ZOOM_APP_CLIENT_ID=${ZOOM_APP_CLIENT_ID}
-      - ZOOM_APP_CLIENT_SECRET=${ZOOM_APP_CLIENT_SECRET}
       - BACKEND_URL=http://backend:3001
-      - NODE_ENV=${NODE_ENV:-development}
     volumes:
       # Mount source code for hot reload
       - ./rtms:/app:delegated

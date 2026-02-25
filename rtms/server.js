@@ -1,11 +1,11 @@
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { mkdirSync, existsSync, createWriteStream } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import dotenv from 'dotenv';
-import wav from 'wav';
 import express from 'express';
 import crypto from 'crypto';
 import WebSocket from 'ws';
+import { saveRawAudio, convertRawToWav, closeRawStream, closeAllAudioStreams, makeSessionTimestamp, getChannelRawPath, getChannelWavPath } from './audioHelper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -32,7 +32,9 @@ const activeEngagements = new Map();
 
 // Generate signature: HMAC-SHA256(client_id + "," + engagement_id + "," + rtms_stream_id, secret)
 function generateSignature(engagementId, rtmsStreamId) {
+  console.log('!!!!!INVOKED!!!!!')
   const message = `${CLIENT_ID},${engagementId},${rtmsStreamId}`;
+  console.log('sig', message)
   return crypto
     .createHmac('sha256', CLIENT_SECRET)
     .update(message)
@@ -59,6 +61,7 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
 
   ws.on('message', (data) => {
     const message = JSON.parse(data.toString());
+    console.log('MESSAGE', message)
 
     if (message.msg_type === 2) {
       // Signaling handshake response
@@ -70,8 +73,8 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
       }
     } else if (message.msg_type === 6) {
       // Event subscription response
-        console.log(message);
-    
+      console.log(message);
+
     } else if (message.msg_type === 12) {
       // Keep-alive request
       ws.send(JSON.stringify({ msg_type: 13, timestamp: message.timestamp }));
@@ -141,15 +144,22 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
     } else if (message.msg_type === 14) {
       // Audio data
       const audioBuffer = Buffer.from(message.content.data, 'base64');
+      const channelId = message.content.channel_id;
 
-      // Write to both WAV and raw PCM files
-      engagementData.wavWriter.write(audioBuffer);
-      engagementData.pcmWriter.write(audioBuffer);
+      if (!engagementData.channelPaths.has(channelId)) {
+        const rawPath = getChannelRawPath(engagementData.sessionDir, channelId);
+        const wavPath = getChannelWavPath(engagementData.sessionDir, channelId);
+        engagementData.channelPaths.set(channelId, { rawPath, wavPath });
+        console.log(`🎙️  New channel ${channelId} → ${rawPath}`);
+      }
+
+      const { rawPath } = engagementData.channelPaths.get(channelId);
+      saveRawAudio(audioBuffer, rawPath);
+      saveRawAudio(audioBuffer, engagementData.mixedRawPath);
       engagementData.audioChunkCount++;
 
-      // Log audio chunk reception every 100 chunks
       if (engagementData.audioChunkCount % 100 === 0) {
-        console.log(`🎵 Audio chunk received: ${engagementData.audioChunkCount} (${audioBuffer.length} bytes)`);
+        console.log(`🎵 Audio chunks: ${engagementData.audioChunkCount} (channels: ${engagementData.channelPaths.size})`);
       }
     }
   });
@@ -180,42 +190,22 @@ function handleRTMSStarted(payload) {
   // Reserve this engagement_id immediately to prevent race condition
   activeEngagements.set(engagement_id, { reservedAt: new Date() });
 
-  // Setup file paths
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const seconds = String(now.getSeconds()).padStart(2, '0');
-  const baseFilename = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+  // Session directory named by recording start time
+  const sessionDir = join(audioDir, makeSessionTimestamp());
+  const mixedRawPath = join(sessionDir, 'mixed.raw');
+  const mixedWavPath = join(sessionDir, 'mixed.wav');
 
-  // Create both WAV and raw PCM files
-  const wavPath = join(audioDir, `${baseFilename}.wav`);
-  const pcmPath = join(audioDir, `${baseFilename}.pcm`);
-
-  // Create WAV writer
-  const wavWriter = new wav.FileWriter(wavPath, {
-    sampleRate: 16000,
-    channels: 1,
-    bitDepth: 16
-  });
-
-  // Create raw PCM writer
-  const pcmWriter = createWriteStream(pcmPath);
-
-  console.log(`🎙️  Recording to:`);
-  console.log(`   WAV: ${wavPath}`);
-  console.log(`   PCM: ${pcmPath} (play with: ffplay -f s16le -ar 16000 -ac 1 ${baseFilename}.pcm)`);
+  console.log(`🎙️  Recording session: ${sessionDir}`);
+  console.log(`   Per-channel: channel_N.raw/.wav  |  Combined: mixed.raw/.wav`);
 
   // Store engagement data
   const engagementData = {
     engagementId: engagement_id,
     rtmsStreamId: rtms_stream_id,
-    wavWriter,
-    pcmWriter,
-    wavPath,
-    pcmPath,
+    sessionDir,
+    channelPaths: new Map(), // channelId -> { rawPath, wavPath }
+    mixedRawPath,
+    mixedWavPath,
     audioChunkCount: 0,
     startedAt: new Date(),
     signalingWs: null,
@@ -262,36 +252,29 @@ async function cleanupEngagement(engagementId) {
       data.mediaWs.close();
     }
 
-    // Close WAV file
-    if (data.wavWriter) {
-      await new Promise((resolve, reject) => {
-        data.wavWriter.end((err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+    // Close each channel's raw stream and convert to WAV
+    for (const [channelId, { rawPath, wavPath }] of data.channelPaths) {
+      await closeRawStream(rawPath);
+      await convertRawToWav(rawPath, wavPath);
+      console.log(`  Channel ${channelId}: ${wavPath}`);
     }
 
-    // Close PCM file
-    if (data.pcmWriter) {
-      await new Promise((resolve, reject) => {
-        data.pcmWriter.end((err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+    // Close mixed stream and convert to WAV
+    if (data.mixedRawPath) {
+      await closeRawStream(data.mixedRawPath);
+      await convertRawToWav(data.mixedRawPath, data.mixedWavPath);
+      console.log(`  Mixed: ${data.mixedWavPath}`);
     }
 
     console.log('='.repeat(60));
     console.log('📁 Recording saved');
     console.log('='.repeat(60));
-    console.log(`WAV: ${data.wavPath}`);
-    console.log(`PCM: ${data.pcmPath}`);
-    console.log(`Chunks: ${data.audioChunkCount}`);
-    console.log(`\nPlay PCM with: ffplay -f s16le -ar 16000 -ac 1 ${data.pcmPath}`);
+    console.log(`Session: ${data.sessionDir}`);
+    console.log(`Channels: ${data.channelPaths.size}`);
+    console.log(`Total chunks: ${data.audioChunkCount}`);
     console.log('='.repeat(60));
   } catch (error) {
-    console.error(`Cleanup error:`, error.message);
+    console.error(`Cleanup error:`);
   } finally {
     activeEngagements.delete(engagementId);
   }
@@ -331,6 +314,7 @@ process.on('SIGINT', async () => {
   for (const [engagementId] of activeEngagements.entries()) {
     await cleanupEngagement(engagementId);
   }
+  await closeAllAudioStreams();
   process.exit(0);
 });
 
