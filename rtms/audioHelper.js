@@ -67,3 +67,76 @@ export function closeAllAudioStreams() {
   writeStreams.clear();
   return Promise.all(promises);
 }
+
+// WAV params: 16kHz, 16-bit
+const WAV_SAMPLE_RATE = 16000;
+const WAV_BITS_PER_SAMPLE = 16;
+
+// Build 44-byte WAV header for raw PCM data
+export function buildWavHeader(dataSize, channels) {
+  const bitsPerSample = WAV_BITS_PER_SAMPLE;
+  const byteRate = WAV_SAMPLE_RATE * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const fileSize = 36 + dataSize;
+
+  const buf = Buffer.alloc(44);
+  buf.write('RIFF', 0, 'ascii');
+  buf.writeUInt32LE(fileSize, 4);
+  buf.write('WAVE', 8, 'ascii');
+  buf.write('fmt ', 12, 'ascii');
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);               // PCM format
+  buf.writeUInt16LE(channels, 22);
+  buf.writeUInt32LE(WAV_SAMPLE_RATE, 24);
+  buf.writeUInt32LE(byteRate, 28);
+  buf.writeUInt16LE(blockAlign, 32);
+  buf.writeUInt16LE(bitsPerSample, 34);
+  buf.write('data', 36, 'ascii');
+  buf.writeUInt32LE(dataSize, 40);
+  return buf;
+}
+
+// Interleave two mono 16-bit PCM buffers into stereo L-R-L-R...
+export function interleaveStereo(left, right) {
+  const nSamples = Math.max(Math.floor(left.length / 2), Math.floor(right.length / 2));
+  const result = Buffer.alloc(nSamples * 4, 0);
+  for (let i = 0; i < nSamples; i++) {
+    const off = i * 4;
+    if (i * 2 + 1 < left.length) {
+      result[off]     = left[i * 2];
+      result[off + 1] = left[i * 2 + 1];
+    }
+    if (i * 2 + 1 < right.length) {
+      result[off + 2] = right[i * 2];
+      result[off + 3] = right[i * 2 + 1];
+    }
+  }
+  return result;
+}
+
+// Read per-channel raw files, interleave them, and write interleaved.wav
+// Stereo when two channels (L=first, R=second), mono when one channel
+export async function finalizeInterleavedWav(sessionDir, channelPaths) {
+  if (channelPaths.size === 0) return;
+
+  const ordered = Array.from(channelPaths.keys());
+  const outPath = path.join(sessionDir, 'mixed.wav');
+
+  let pcm;
+  let channels;
+
+  if (ordered.length >= 2) {
+    const left  = fs.readFileSync(channelPaths.get(ordered[0]).rawPath);
+    const right = fs.readFileSync(channelPaths.get(ordered[1]).rawPath);
+    pcm = interleaveStereo(left, right);
+    channels = 2;
+    console.log(`  Interleaved stereo (L=${ordered[0]}, R=${ordered[1]}): ${outPath}`);
+  } else {
+    pcm = fs.readFileSync(channelPaths.get(ordered[0]).rawPath);
+    channels = 1;
+    console.log(`  Interleaved mono (${ordered[0]}): ${outPath}`);
+  }
+
+  const header = buildWavHeader(pcm.length, channels);
+  fs.writeFileSync(outPath, Buffer.concat([header, pcm]));
+}

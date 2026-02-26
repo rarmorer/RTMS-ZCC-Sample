@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import crypto from 'crypto';
 import WebSocket from 'ws';
-import { saveRawAudio, convertRawToWav, closeRawStream, closeAllAudioStreams, makeSessionTimestamp, getChannelRawPath, getChannelWavPath } from './audioHelper.js';
+import { saveRawAudio, convertRawToWav, closeRawStream, closeAllAudioStreams, makeSessionTimestamp, getChannelRawPath, getChannelWavPath, finalizeInterleavedWav } from './audioHelper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -155,7 +155,6 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
 
       const { rawPath } = engagementData.channelPaths.get(channelId);
       saveRawAudio(audioBuffer, rawPath);
-      saveRawAudio(audioBuffer, engagementData.mixedRawPath);
       engagementData.audioChunkCount++;
 
       if (engagementData.audioChunkCount % 100 === 0) {
@@ -192,11 +191,9 @@ function handleRTMSStarted(payload) {
 
   // Session directory named by recording start time
   const sessionDir = join(audioDir, makeSessionTimestamp());
-  const mixedRawPath = join(sessionDir, 'mixed.raw');
-  const mixedWavPath = join(sessionDir, 'mixed.wav');
 
   console.log(`🎙️  Recording session: ${sessionDir}`);
-  console.log(`   Per-channel: channel_N.raw/.wav  |  Combined: mixed.raw/.wav`);
+  console.log(`   Per-channel: channel_N.raw/.wav  |  Interleaved: mixed.wav`);
 
   // Store engagement data
   const engagementData = {
@@ -204,8 +201,6 @@ function handleRTMSStarted(payload) {
     rtmsStreamId: rtms_stream_id,
     sessionDir,
     channelPaths: new Map(), // channelId -> { rawPath, wavPath }
-    mixedRawPath,
-    mixedWavPath,
     audioChunkCount: 0,
     startedAt: new Date(),
     signalingWs: null,
@@ -259,12 +254,8 @@ async function cleanupEngagement(engagementId) {
       console.log(`  Channel ${channelId}: ${wavPath}`);
     }
 
-    // Close mixed stream and convert to WAV
-    if (data.mixedRawPath) {
-      await closeRawStream(data.mixedRawPath);
-      await convertRawToWav(data.mixedRawPath, data.mixedWavPath);
-      console.log(`  Mixed: ${data.mixedWavPath}`);
-    }
+    // Write interleaved stereo WAV from per-channel raw files
+    await finalizeInterleavedWav(data.sessionDir, data.channelPaths);
 
     console.log('='.repeat(60));
     console.log('📁 Recording saved');
