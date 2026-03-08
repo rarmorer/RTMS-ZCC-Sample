@@ -32,9 +32,7 @@ const activeEngagements = new Map();
 
 // Generate signature: HMAC-SHA256(client_id + "," + engagement_id + "," + rtms_stream_id, secret)
 function generateSignature(engagementId, rtmsStreamId) {
-  console.log('!!!!!INVOKED!!!!!')
   const message = `${CLIENT_ID},${engagementId},${rtmsStreamId}`;
-  console.log('sig', message)
   return crypto
     .createHmac('sha256', CLIENT_SECRET)
     .update(message)
@@ -61,8 +59,6 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
 
   ws.on('message', (data) => {
     const message = JSON.parse(data.toString());
-    console.log('MESSAGE', message)
-
     if (message.msg_type === 2) {
       // Signaling handshake response
       if (message.status_code === 0) {
@@ -110,7 +106,7 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
       engagement_id: engagementId,
       rtms_stream_id: rtmsStreamId,
       signature: generateSignature(engagementId, rtmsStreamId),
-      media_type: 1, // Audio only
+      media_type: 32, // Audio only
       payload_encryption: false,
       media_params: {
         audio: {
@@ -120,6 +116,11 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
           codec: 1,        // L16
           data_opt: 1,     // Mixed stream
           send_rate: 20    // 20ms intervals
+        }, 
+        transcript: {
+            content_type: 5,
+            src_language: 9,
+            enable_lid: true
         }
       }
     };
@@ -159,7 +160,8 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
         const wavPath = getChannelWavPath(engagementData.sessionDir, channelId);
         engagementData.channelPaths.set(channelId, { rawPath, wavPath });
         console.log(`🎙️  New channel ${channelId} → ${rawPath}`);
-      }
+      } 
+
 
       const { rawPath } = engagementData.channelPaths.get(channelId);
       saveRawAudio(audioBuffer, rawPath);
@@ -168,7 +170,9 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
       if (engagementData.audioChunkCount % 100 === 0) {
         console.log(`🎵 Audio chunks: ${engagementData.audioChunkCount} (channels: ${engagementData.channelPaths.size})`);
       }
-    }
+    } else if(message.msg_type === 17){
+        console.log("transcript", message.content.data)
+      }
   });
 
   ws.on('error', (error) => {
