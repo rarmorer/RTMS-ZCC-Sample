@@ -1,10 +1,8 @@
-# Zoom Contact Center RTMS Audio Capture App
-
-A production-ready Zoom Contact Center application that captures real-time audio from customer engagements using Zoom's Real-Time Media Streams (RTMS) API.
+# Zoom Contact Center RTMS Basic Sample App
 
 ## Overview
 
-This application automatically captures live audio from Zoom Contact Center engagements and saves them as WAV files. The app runs as a containerized microservices architecture with three main components:
+This application uses Zoom RTMS captures live audio from Zoom Contact Center voice engagements. The app runs as a containerized microservices architecture with three main components:
 
 - **Frontend**: React-based Zoom App SDK interface
 - **Backend**: Express API server handling OAuth and webhooks
@@ -12,9 +10,11 @@ This application automatically captures live audio from Zoom Contact Center enga
 
 ## Features
 
-- Automatic audio capture from Zoom Contact Center engagements
+- Automatic audio capture from Zoom Contact Center engagements 
 - Real-time WebSocket connection to Zoom media servers
-- WAV file output (16kHz, 16-bit, mono)
+- WAV file output for each stream (16kHz, 16-bit) + interleaved capability for muxing streams
+- Real-time transcript capture saved to daily log files
+- Call transfer detection with automatic reconnection
 - OAuth 2.0 authentication with Zoom
 - Webhook signature verification for security
 - Docker containerization for easy deployment
@@ -30,135 +30,10 @@ Before setting up the application, ensure you have:
 - Node.js >= 18.0.0
 - npm >= 9.0.0
 - Docker and Docker Compose (for containerized deployment)
+- ffmpeg (for raw PCM to WAV conversion)
 - Zoom Contact Center account with admin access
+- RTMS license provisioned to your Contact Center account
 - ngrok account (for exposing local server to Zoom webhooks)
-
-## Zoom Marketplace Setup
-
-### 1. Create a New App
-
-1. Go to [Zoom Marketplace](https://marketplace.zoom.us/)
-2. Click "Develop" > "Build App"
-3. Select "General app" as the app type
-4. Fill in basic information:
-   - App name: Your app name
-
-### 2. Configure App Credentials
-
-In the "App Credentials" tab:
-
-1. Note your **Client ID** and **Client Secret**
-2. Add these to your `.env` file as:
-   - `ZOOM_APP_CLIENT_ID`
-   - `ZOOM_APP_CLIENT_SECRET`
-
-### 3. Configure Information
-
-In the "Information" tab:
-
-1. **App Name**: Your application name
-2. **Short Description**: Brief description of your app
-3. **Long Description**: Detailed description
-4. **Developer Contact**: Your contact information
-
-### 4. Configure Features
-
-In the "Features" tab:
-
-**Zoom App SDK:**
-- Enable "Zoom App SDK"
-- Add capabilities:
-  - `authorize`
-  - `onAuthorized`
-  - `getUserContext`
-  - `getRunningContext`
-  - `getEngagementContext`
-  - `getEngagementStatus`
-  - `onEngagementContextChange`
-  - `onEngagementStatusChange`
-
-**Embedded Zoom App:**
-- Enable "Contact Center" as app location
-- Home URL: `https://your-ngrok-url.ngrok-free.app/api/home`
-- Redirect URL for OAuth: `https://your-ngrok-url.ngrok-free.app/api/auth/callback`
-
-### 5. Configure Scopes
-
-In the "Scopes" tab, add the following OAuth scopes:
-
-**Required:**
-- `zoomapp:incontactcenter` - Required for Contact Center context
-
-**Optional (for enhanced features):**
-- `user:read:admin` - Read user information
-- `contact_center:read:admin` - Read contact center data
-
-### 6. Configure Event Subscriptions
-
-In the "Event Subscriptions" tab:
-
-1. **Enable Event Subscriptions**: Toggle ON
-2. **Event notification endpoint URL**: `https://your-ngrok-url.ngrok-free.app/api/webhooks/zoom`
-3. **Add Event Types**:
-   - `contact_center.voice_rtms_started` - Triggered when RTMS starts for voice engagement
-   - `contact_center.voice_rtms_stopped` - Triggered when RTMS stops for voice engagement
-   - `meeting.rtms_started` - (Optional) For regular meetings
-   - `meeting.rtms_stopped` - (Optional) For regular meetings
-4. **Secret Token**: Copy the generated secret token to your `.env` file as `ZOOM_SECRET_TOKEN`
-
-### 7. Configure RTMS
-
-In the "RTMS" tab:
-
-1. **Enable RTMS**: Toggle ON
-2. This allows your app to receive real-time media streams from Zoom
-
-### 8. Activate Your App
-
-1. Go to "Activation" tab
-2. For development: Install the app to your account
-3. For production: Submit for review and publish
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-```bash
-cp .env.example .env
-```
-
-### Required Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `ZOOM_APP_CLIENT_ID` | Client ID from Zoom Marketplace | `abc123xyz` |
-| `ZOOM_APP_CLIENT_SECRET` | Client Secret from Zoom Marketplace | `secret123` |
-| `ZOOM_SECRET_TOKEN` | Webhook secret token from Marketplace | `token123` |
-
-### URL Configuration
-
-| Variable | Description | Default | When to Update |
-|----------|-------------|---------|----------------|
-| `PUBLIC_URL` | Public backend URL for webhooks | `http://localhost:3001` | Update with ngrok URL |
-| `ZOOM_REDIRECT_URL` | OAuth callback URL | `http://localhost:3001/api/auth/callback` | Update with ngrok URL |
-| `FRONTEND_URL` | Frontend URL for redirects | `http://localhost:3000` | Keep as localhost |
-| `FRONTEND_INTERNAL_URL` | Docker internal frontend URL | `http://frontend:3000` | Keep as Docker service |
-| `RTMS_SERVER_URL` | RTMS server URL | `http://rtms:8080` | Keep as Docker service |
-
-### Port Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Frontend port | `3000` |
-| `BACKEND_PORT` | Backend API port | `3001` |
-| `RTMS_PORT` | RTMS server port | `3002` |
-
-### Other Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NODE_ENV` | Environment mode | `development` |
-| `SESSION_SECRET` | Express session secret | Random string |
 
 ## Installation
 
@@ -180,8 +55,6 @@ npm run install:rtms
 # Copy example env file
 cp .env.example .env
 
-# Edit .env with your Zoom credentials
-nano .env
 ```
 
 ### 3. Start with Docker
@@ -211,20 +84,95 @@ npm run ngrok
 ngrok http 3001
 ```
 
-Copy the HTTPS URL (e.g., `https://abc123.ngrok-free.app`) and update:
+Copy the HTTPS URL (e.g., `https://abc123.ngrok-free.app`) for use in your `.env` file and marketplace set-up.
 
-1. **In your `.env` file**:
-   ```
-   PUBLIC_URL=https://abc123.ngrok-free.app
-   ZOOM_REDIRECT_URL=https://abc123.ngrok-free.app/api/auth/callback
-   ```
+**Restart the application** to pick up new environment variables
 
-2. **In Zoom Marketplace**:
-   - Home URL: `https://abc123.ngrok-free.app/api/home`
-   - Redirect URL: `https://abc123.ngrok-free.app/api/auth/callback`
-   - Event notification URL: `https://abc123.ngrok-free.app/api/webhooks/zoom`
+## Zoom Marketplace Setup
 
-3. **Restart the application** to pick up new environment variables
+### 1. Create a New App
+
+1. Go to [Zoom Marketplace](https://marketplace.zoom.us/)
+2. Click "Develop" > "Build App"
+3. Select "General app" as the app type (note: app must user-managed)
+4. Fill in basic information:
+   - App name: Your app name
+   - Redirect URL for OAuth: `https://your-ngrok-url.ngrok-free.app/api/auth/callback`
+5. Create an event subscription under "Access": 
+   - Toggle "Event Subscription" on 
+   - Select "Webhook" for your method 
+   - Add a name 
+   - Under "Events" subscribe to all Contact Center RTMS events (search "ZCC" to quickly find and select)
+   - Add in your notificiation URL to receive webhooks:`https://your-ngrok-url.ngrok-free.app/api/webhooks/zoom`
+6. Surface your app for use within the Zoom Client under "Surface" (note: this sample app is specifically designed to be used as a Surface app): 
+   - Add in your approved domains, including your home URL: 
+      - Home URL: `https://your-ngrok-url.ngrok-free.app/api/home`
+7. Add in app permissions under "Scopes": 
+   - `contact_center:read:zcc_voice_audio`
+   - `contact_center:update:engagement_rtms_app_status`
+   - `contact_center:read:zcc_voice_transcript`
+
+### 2. Configure App Credentials
+
+In the "App Credentials" tab:
+
+1. Note your **Client ID** and **Client Secret**
+2. Add these to your `.env` file as:
+   - `ZOOM_APP_CLIENT_ID`
+   - `ZOOM_APP_CLIENT_SECRET`
+3. Access and copy your **Secret Token** for event notifications in the "Access" menu. Add to `env` file as: 
+   - `ZOOM_SECRET_TOKEN`
+
+
+### 3. Add your app for use
+
+Ensure your app is ready for use by adding it within the "Add your App -> Local Test" menu. Clicking "add app" will run through the OAuth process. Make sure your application is up and running. 
+
+## Admin Set-up
+
+Once your app is installed for use, you can configure it with your Contact Center settings at zoom.us/myhome: 
+
+1. Navigate to "Admin -> Contact Center Management -> Integrations" 
+2. Select "Zoom Apps", then the "RTMS" tab
+3. Locate & select your newly created RTMS app to adjust settings
+4. Ensure **auto-start** is enabled (this application is designed for use with auto-start *only*)
+5. Add the app to the appropiate queue (note: voice engagements cannot access RTMS unless the user is assigned to a queue with app access) 
+
+## Application Variables
+
+### Required Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ZOOM_APP_CLIENT_ID` | Client ID from Zoom Marketplace | `abc123xyz` |
+| `ZOOM_APP_CLIENT_SECRET` | Client Secret from Zoom Marketplace | `secret123` |
+| `ZOOM_SECRET_TOKEN` | Webhook secret token from Marketplace | `token123` |
+
+### URL Configuration
+
+| Variable | Description | Default | When to Update |
+|----------|-------------|---------|----------------|
+| `PUBLIC_URL` | Public backend URL for webhooks | `http://localhost:3001` | Update with ngrok URL |
+| `ZOOM_REDIRECT_URL` | OAuth callback URL | `http://localhost:3001/api/auth/callback` | Update with ngrok URL |
+| `FRONTEND_URL` | Frontend URL for redirects | `http://localhost:3000` | Keep as localhost |
+| `FRONTEND_INTERNAL_URL` | Docker internal frontend URL | `http://frontend:3000` | Keep as Docker service |
+| `RTMS_SERVER_URL` | RTMS server URL | `http://rtms:8080` | Keep as RTMS server |
+
+### Port Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Frontend port | `3000` |
+| `BACKEND_PORT` | Backend API port | `3001` |
+| `RTMS_PORT` | RTMS server port | `3002` |
+
+### Other Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NODE_ENV` | Environment mode | `development` |
+| `SESSION_SECRET` | Express session secret | Generate random string |
+
 
 ## Application Flow
 
@@ -258,18 +206,22 @@ Sends media handshake (requests audio: 16kHz, mono, L16)
 Sends CLIENT_READY_ACK
 ```
 
-### 3. Audio Capture
+### 3. Audio & Transcript Capture
 
 ```
 RTMS server receives audio data messages (msg_type: 14)
          ↓
-Extracts base64-encoded audio chunks
+Extracts base64-encoded audio chunks by channel_id
          ↓
-Decodes to PCM audio buffer
+Decodes to PCM and appends to per-channel .raw file
          ↓
-Writes to WAV file stream
+Files saved at: rtms/data/audio/{session_timestamp}/channel_N.raw
+
+RTMS server receives transcript messages (msg_type: 17)
          ↓
-WAV file saved at: rtms/data/audio/audio_{engagement_id}_{timestamp}.wav
+Appends JSON transcript entry to daily log
+         ↓
+Saved at: rtms/data/transcripts/{YYYY-MM-DD}.txt
 ```
 
 ### 4. Engagement Ends
@@ -279,23 +231,32 @@ Zoom triggers webhook: contact_center.voice_rtms_stopped
          ↓
 RTMS server closes WebSocket connections
          ↓
-Finalizes WAV file
+Each channel .raw file converted to channel_N.wav via ffmpeg
+         ↓
+Per-channel files interleaved into mixed.wav (stereo if 2 channels)
          ↓
 Cleans up engagement resources
          ↓
-Audio file ready for processing
+Session directory ready: rtms/data/audio/{session_timestamp}/
 ```
+
 
 ## Data Storage
 
 ### Audio Files
 
-- **Location**: `rtms/data/audio/`
-- **Format**: WAV (PCM)
-- **Sample Rate**: 16kHz
-- **Bit Depth**: 16-bit
-- **Channels**: Mono
-- **Naming**: `audio_{engagement_id}_{timestamp}.wav`
+Each engagement creates a timestamped session directory containing:
+
+- **Location**: `rtms/data/audio/{YYYY-MM-DD_HH-MM-SS}/`
+- **Per-channel raw**: `channel_N.raw` — raw 16-bit PCM captured during the call
+- **Per-channel WAV**: `channel_N.wav` — individual mono WAV (16kHz, 16-bit) per participant
+- **Mixed output**: `mixed.wav` — stereo interleaved WAV (L=channel 0, R=channel 1) when 2 channels; mono when 1 channel
+
+### Transcript Files
+
+- **Location**: `rtms/data/transcripts/`
+- **Format**: Plain text, one JSON entry per line with ISO timestamp prefix
+- **Naming**: `{YYYY-MM-DD}.txt` (one file per day)
 
 ### File Management
 
@@ -303,11 +264,14 @@ Audio file ready for processing
 # Clean all audio files
 npm run clean:data
 
-# View audio files
+# View session directories
 ls -lh rtms/data/audio/
 
-# Play audio file (requires sox/ffplay)
-ffplay rtms/data/audio/audio_eng_12345_*.wav
+# Play mixed output (requires ffplay)
+ffplay rtms/data/audio/2024-01-15_10-30-45/mixed.wav
+
+# View today's transcripts
+cat rtms/data/transcripts/$(date +%Y-%m-%d).txt
 ```
 
 ## Development
@@ -389,91 +353,3 @@ npm stop
 | `/` | POST | RTMS webhook handler |
 | `/health` | GET | Health check with active engagements |
 
-## Security Features
-
-- **Webhook Signature Verification**: All webhooks verified using HMAC-SHA256
-- **OAuth 2.0**: Secure authorization with Zoom
-- **Session Management**: Secure session handling with HttpOnly cookies
-- **CORS Protection**: Configured CORS for frontend-backend communication
-- **Security Headers**: OWASP-recommended security headers
-- **Duplicate Prevention**: 5-second deduplication window for webhooks
-- **Environment Isolation**: Sensitive credentials in environment variables
-
-## Troubleshooting
-
-### Issue: Webhooks not received
-
-**Solution:**
-1. Check ngrok is running and URL is correct
-2. Verify webhook URL in Zoom Marketplace matches ngrok URL
-3. Check backend logs: `npm run logs:backend`
-4. Test webhook endpoint: `curl https://your-ngrok-url.ngrok-free.app/health`
-
-### Issue: Audio files not created
-
-**Solution:**
-1. Check RTMS server logs: `npm run logs:rtms`
-2. Verify RTMS is enabled in Zoom Marketplace
-3. Check engagement_id and rtms_stream_id in webhook payload
-4. Ensure rtms/data/audio/ directory exists
-
-### Issue: OAuth authorization fails
-
-**Solution:**
-1. Verify ZOOM_APP_CLIENT_ID and ZOOM_APP_CLIENT_SECRET in .env
-2. Check OAuth redirect URL matches Marketplace configuration
-3. Ensure ngrok URL is updated in both .env and Marketplace
-4. Check backend logs for token exchange errors
-
-### Issue: Docker containers fail to start
-
-**Solution:**
-1. Check Docker is running: `docker ps`
-2. Rebuild containers: `npm run rebuild`
-3. Check logs: `npm run logs`
-4. Clean Docker volumes: `npm run clean`
-
-### Issue: Frontend can't connect to backend
-
-**Solution:**
-1. Verify REACT_APP_BACKEND_URL in .env
-2. Check CORS configuration in backend/server.js
-3. Ensure backend is running: `curl http://localhost:3001/health`
-4. Check browser console for errors
-
-## Production Deployment
-
-### Before Deploying
-
-1. Update environment variables for production
-2. Set `NODE_ENV=production`
-3. Use strong `SESSION_SECRET`
-4. Configure proper domain instead of ngrok
-5. Set up SSL/TLS certificates
-6. Configure production database (if needed)
-7. Set up monitoring and logging
-8. Configure backup for audio files
-
-### Deployment Options
-
-- **Cloud Platforms**: AWS, Google Cloud, Azure
-- **Container Orchestration**: Kubernetes, Docker Swarm
-- **Serverless**: AWS Lambda (requires modifications)
-- **PaaS**: Heroku, Render, Railway
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Support
-
-For issues and questions:
-- GitHub Issues: [Your repo URL]
-- Email: [Your support email]
-- Zoom Developer Forum: https://devforum.zoom.us/
-
-## Acknowledgments
-
-- Zoom Developer Platform
-- Zoom Real-Time Media Streams API
-- Zoom Contact Center API
