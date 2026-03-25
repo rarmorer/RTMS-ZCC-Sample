@@ -262,6 +262,44 @@ app.all('/api/zoom/*', async (req, res) => {
   }
 });
 
+// SSE clients — frontend agents subscribe here for live keyword prompts
+const sseClients = new Set();
+
+app.get('/api/rtms-events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  sseClients.add(res);
+  res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected' })}\n\n`);
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 30000);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+    clearInterval(keepAlive);
+  });
+});
+
+// Internal endpoint — RTMS server POSTs sentiment events here
+app.post('/api/internal/sentiment', (req, res) => {
+  const payload = `event: sentiment\ndata: ${JSON.stringify(req.body)}\n\n`;
+  for (const client of sseClients) {
+    client.write(payload);
+  }
+  res.sendStatus(204);
+});
+
+// Internal endpoint — RTMS server POSTs raw transcript text here
+app.post('/api/internal/transcript', (req, res) => {
+  const payload = `event: transcript\ndata: ${JSON.stringify(req.body)}\n\n`;
+  for (const client of sseClients) {
+    client.write(payload);
+  }
+  res.sendStatus(204);
+});
+
 // Proxy all other requests to frontend React dev server (Docker mode)
 // This allows the backend to serve as single entry point
 app.use('/', createProxyMiddleware({

@@ -6,6 +6,8 @@ import express from 'express';
 import crypto from 'crypto';
 import WebSocket from 'ws';
 import { saveRawAudio, convertRawToWav, closeRawStream, closeAllAudioStreams, makeSessionTimestamp, getChannelRawPath, getChannelWavPath, finalizeInterleavedWav } from './audioHelper.js';
+import axios from 'axios';
+import { analyzeChunk, removeChannel } from './volumeAnalyzer.js';
 import { appendFileSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +19,7 @@ dotenv.config({ path: join(__dirname, '../.env') });
 const PORT = process.env.PORT || 8080;
 const CLIENT_ID = process.env.ZOOM_APP_CLIENT_ID;
 const CLIENT_SECRET = process.env.ZOOM_APP_CLIENT_SECRET;
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 
 // Ensure data directories exist
 const dataDir = join(__dirname, 'data');
@@ -76,6 +79,7 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
         }
       }
     } else if (message.msg_type === 6) {
+      console.log(message)
       if (message.event.event_type === 21 || message.event.event_type === 18) {
         console.log(`[${engagementId}] Transfer event (type ${message.event.event_type})`);
         const channelId = message.event.paticipant_info?.channel_id;
@@ -89,6 +93,7 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
             console.error(`🔄 Transfer: failed to finalize channel ${channelId}:`, err.message);
           }
           engagementData.channelPaths.delete(channelId);
+          removeChannel(channelId);
           console.log(`🔄 Transfer: removed channel ${channelId} (channels remaining: ${engagementData.channelPaths.size})`);
         }
       }
@@ -182,12 +187,32 @@ function connectToMediaWebSocket(mediaUrl, engagementId, rtmsStreamId, signaling
       saveRawAudio(audioBuffer, rawPath);
       engagementData.audioChunkCount++;
 
+      analyzeChunk(
+        channelId,
+        audioBuffer,
+        (ch, avgRms) => {
+          console.log(`[${engagementId}] High volume on channel ${ch} (rms: ${avgRms.toFixed(3)})`);
+          axios.post(`${BACKEND_URL}/api/internal/sentiment`, {
+            engagementId, channelId: ch, level: 'high', rms: avgRms, timestamp: new Date().toISOString()
+          }).catch(() => {});
+        },
+        (ch) => {
+          axios.post(`${BACKEND_URL}/api/internal/sentiment`, {
+            engagementId, channelId: ch, level: 'normal', timestamp: new Date().toISOString()
+          }).catch(() => {});
+        }
+      );
+
       if (engagementData.audioChunkCount % 100 === 0) {
         console.log(`🎵 Audio chunks: ${engagementData.audioChunkCount} (channels: ${engagementData.channelPaths.size})`);
       }
     } else if(message.msg_type === 17){
-        console.log("transcript", message.content.data);
-        saveTranscript(engagementId, message.content.data);
+        const transcriptData = message.content.data;
+        console.log("transcript", transcriptData);
+        saveTranscript(engagementId, transcriptData);
+        axios.post(`${BACKEND_URL}/api/internal/transcript`, {
+          text: transcriptData, engagementId, timestamp: new Date().toISOString()
+        }).catch(() => {});
       }
   });
 
@@ -278,6 +303,7 @@ async function cleanupEngagement(engagementId) {
 
     // Close each channel's raw stream and convert to WAV
     for (const [channelId, { rawPath, wavPath }] of data.channelPaths) {
+      removeChannel(channelId);
       await closeRawStream(rawPath);
       await convertRawToWav(rawPath, wavPath);
       console.log(`  Channel ${channelId}: ${wavPath}`);

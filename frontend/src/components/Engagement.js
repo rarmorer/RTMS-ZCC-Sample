@@ -1,4 +1,6 @@
-import React from 'react';
+import { useState } from 'react';
+import KeywordPrompts from './KeywordPrompts';
+import SentimentIndicator from './SentimentIndicator';
 import './Engagement.css';
 
 function Engagement({
@@ -8,6 +10,9 @@ function Engagement({
   message,
   error
 }) {
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [rtmsInfoOpen, setRtmsInfoOpen] = useState(false);
+
   return (
     <div className="engagement-container">
       <header className="header engagement-header">
@@ -55,6 +60,8 @@ function Engagement({
         </div>
       </div>
 
+      <SentimentIndicator />
+
       {message && (
         <div className="message-box">
           {message}
@@ -63,21 +70,26 @@ function Engagement({
 
       {/* Engagement Status */}
       <div className="section">
-        <h2>Status</h2>
-        <div className="status-grid">
-          <div className="status-item">
-            <span className="status-label">SDK:</span>
-            <span className="status-value success">Initialized</span>
+        <button className="collapsible-toggle" onClick={() => setStatusOpen(o => !o)}>
+          <h2>Status</h2>
+          <span>{statusOpen ? '▲' : '▼'}</span>
+        </button>
+        {statusOpen && (
+          <div className="status-grid">
+            <div className="status-item">
+              <span className="status-label">SDK:</span>
+              <span className="status-value success">Initialized</span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Context:</span>
+              <span className="status-value">inContactCenter</span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">RTMS:</span>
+              <span className="status-value success">Auto-Enabled</span>
+            </div>
           </div>
-          <div className="status-item">
-            <span className="status-label">Context:</span>
-            <span className="status-value">inContactCenter</span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">RTMS:</span>
-            <span className="status-value success">Auto-Enabled</span>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Engagement Context */}
@@ -103,26 +115,36 @@ function Engagement({
         </div>
       )}
 
+      {/* Live Keyword Prompts */}
+      <div className="section" style={{ padding: 0 }}>
+        <KeywordPrompts />
+      </div>
+
       {/* RTMS Information */}
       <div className="section">
-        <h2>RTMS Information</h2>
-        <div className="rtms-info">
-          <p className="info-text">
-            <strong>RTMS is automatically enabled</strong> based on your Zoom account settings.
-          </p>
-          <h4>What gets captured automatically:</h4>
-          <ul>
-            <li>Live audio streams (16kHz, 16-bit, mono WAV)</li>
-            <li>Engagement metadata</li>
-          </ul>
-          <p className="note">
-            All data is stored on the backend RTMS server at <code>rtms/data/audio/</code> indexed by engagement ID.
-            Data is automatically saved when the engagement ends.
-          </p>
-          <p className="note">
-            <strong>No manual controls needed</strong> - RTMS connects automatically when webhooks are received.
-          </p>
-        </div>
+        <button className="collapsible-toggle" onClick={() => setRtmsInfoOpen(o => !o)}>
+          <h2>RTMS Information</h2>
+          <span>{rtmsInfoOpen ? '▲' : '▼'}</span>
+        </button>
+        {rtmsInfoOpen && (
+          <div className="rtms-info">
+            <p className="info-text">
+              <strong>RTMS is automatically enabled</strong> based on your Zoom account settings.
+            </p>
+            <h4>What gets captured automatically:</h4>
+            <ul>
+              <li>Live audio streams (16kHz, 16-bit, mono WAV)</li>
+              <li>Engagement metadata</li>
+            </ul>
+            <p className="note">
+              All data is stored on the backend RTMS server at <code>rtms/data/audio/</code> indexed by engagement ID.
+              Data is automatically saved when the engagement ends.
+            </p>
+            <p className="note">
+              <strong>No manual controls needed</strong> - RTMS connects automatically when webhooks are received.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="section footer">

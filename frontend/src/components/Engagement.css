@@ -111,6 +111,23 @@
   color: #5a4b9e;
 }
 
+/* Collapsible section toggle */
+.collapsible-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.collapsible-toggle h2 {
+  margin: 0;
+}
+
 /* Warning text for transfers */
 .engagement-container .warning-text {
   color: #ff9800;
