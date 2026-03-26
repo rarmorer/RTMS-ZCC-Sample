@@ -105,14 +105,6 @@ function connectToSignalingWebSocket(engagementId, rtmsStreamId, serverUrl, enga
 
   ws.on('close', (code) => {
     console.log(`[${engagementId}] Signaling WebSocket closed (code: ${code})`);
-    if (code === 1000) {
-      console.log(`[${engagementId}] Transfer detected — reconnecting...`);
-      if (engagementData.mediaWs) {
-        engagementData.mediaWs.close();
-        engagementData.mediaWs = null;
-      }
-      connectToSignalingWebSocket(engagementId, rtmsStreamId, engagementData.serverUrl, engagementData);
-    }
   });
 }
 
