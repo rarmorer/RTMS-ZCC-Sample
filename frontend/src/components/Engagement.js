@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import KeywordPrompts from './KeywordPrompts';
 import SentimentIndicator from './SentimentIndicator';
+import AIAssistSearch from './AIAssistSearch';
 import './Engagement.css';
 
 function Engagement({
@@ -114,6 +115,11 @@ function Engagement({
           )}
         </div>
       )}
+
+      {/* AI Assist Search */}
+      <div className="section" style={{ paddingBottom: 0 }}>
+        <AIAssistSearch />
+      </div>
 
       {/* Live Keyword Prompts */}
       <div className="section" style={{ padding: 0 }}>
