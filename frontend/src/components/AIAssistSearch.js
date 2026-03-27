@@ -90,7 +90,7 @@ function AIAssistSearch() {
 
       {searchTerm && (
         <div className="aas-result">
-          <span className="aas-term">{searchTerm}</span>
+          <span className="aas-term">Help setting up new account</span>
           <button
             className={`aas-copy-btn${copied ? ' aas-copy-btn--copied' : ''}`}
             onClick={handleCopy}

@@ -4,8 +4,8 @@
 // the HIGH_VOLUME_THRESHOLD — used as a proxy for customer agitation.
 
 const WINDOW_SIZE   = 20;     // chunks (~400ms at 20ms/chunk)
-const HIGH_THRESHOLD = 0.15;  // lower than you'd think — Zoom AGC normalises levels
-const LOW_THRESHOLD  = 0.08;  // must drop below this before re-triggering
+const HIGH_THRESHOLD = 0.10;  // lowered from 0.15 to catch screaming — Zoom AGC normalises levels
+const LOW_THRESHOLD  = 0.06;  // lowered from 0.08 to match new high threshold
 const DEBOUNCE_MS    = 5000;  // minimum ms between sentiment events per channel
 const LOG_EVERY      = 100;   // log rolling RMS every N chunks (for calibration)
 
