@@ -10,61 +10,36 @@ This application uses Zoom RTMS captures live audio from Zoom Contact Center voi
 
 ## Features
 
-- Automatic audio capture from Zoom Contact Center engagements 
-- Real-time WebSocket connection to Zoom media servers
+- Real-time audio and transcript streams from Zoom Contact Center engagements 
 - WAV file output for each stream (16kHz, 16-bit) + interleaved capability for muxing streams
-- Real-time transcript capture saved to daily log files
-- Call transfer detection with per-channel audio finalization (a new RTMS session is required to resume after transfer; automatic WebSocket reconnection is not implemented)
-- OAuth 2.0 authentication with Zoom
-- Webhook signature verification for security
+- Auto-saving of streams, separated by channel id and engagement id 
 - Docker containerization for easy deployment
 - Duplicate webhook prevention
-- Graceful engagement cleanup
-
 
 
 ## Prerequisites
 
-Before setting up the application, ensure you have:
-
-- Node.js >= 18.0.0
-- npm >= 9.0.0
-- Docker and Docker Compose (for containerized deployment)
-- ffmpeg (for raw PCM to WAV conversion)
+- Docker and Docker Compose
 - Zoom Contact Center account with admin access
 - RTMS license provisioned to your Contact Center account
 - ngrok account (for exposing local server to Zoom webhooks)
 
-## Installation
+## Docker Setup (reccomended path)
 
-### 1. Clone and Install Dependencies
+Docker handles all runtime dependencies — Node.js, npm, and ffmpeg are installed inside the containers. No local installation of those tools is required.
 
-```bash
-# Install all dependencies
-npm run install:all
-
-# Or install individually
-npm run install:frontend
-npm run install:backend
-npm run install:rtms
-```
-
-### 2. Configure Environment
+### 1. Configure Environment
 
 ```bash
-# Copy example env file
 cp .env.example .env
-
 ```
 
-### 3. Start with Docker
+Open `.env` and fill in your Zoom credentials (see [Application Variables](#application-variables) and [Zoom Marketplace Setup](#zoom-marketplace-setup) below).
+
+### 2. Start the App
 
 ```bash
-# Start all services
-npm start
-
-# Or with Docker Compose directly
-docker-compose up
+docker compose up
 ```
 
 The services will be available at:
@@ -72,21 +47,49 @@ The services will be available at:
 - Backend API: http://localhost:3001
 - RTMS Server: http://localhost:8080
 
-### 4. Setup ngrok for Webhook Testing
+### 3. Setup ngrok for Webhook Testing
 
 In a new terminal:
 
 ```bash
-# Start ngrok tunnel
-npm run ngrok
-
-# Or run ngrok directly
 ngrok http 3001
 ```
 
-Copy the HTTPS URL (e.g., `https://abc123.ngrok-free.app`) for use in your `.env` file and marketplace set-up.
+Copy the HTTPS URL (e.g., `https://abc123.ngrok-free.app`) into your `.env` wherever directed, then restart the containers to pick up the new values.
 
-**Restart the application** to pick up new environment variables
+---
+
+## Manual Setup (without Docker)
+
+> Requires Node.js (latest LTS), npm, and ffmpeg installed locally.
+
+### 1. Install Dependencies
+
+```bash
+npm run install:all
+```
+
+### 2. Configure Environment
+
+```bash
+cp .env.example .env
+```
+
+Fill in your Zoom credentials, then set `FRONTEND_INTERNAL_URL` to `http://localhost:3000` (instead of the Docker service name).
+
+### 3. Start All Services
+
+```bash
+npm run dev:local
+```
+
+### 4. Setup ngrok
+
+```bash
+ngrok http 3001
+```
+
+Copy the HTTPS URL into your `.env` file as `PUBLIC_URL` and `ZOOM_REDIRECT_URL`, then restart the services.
 
 ## Zoom Marketplace Setup
 
@@ -277,7 +280,7 @@ npm run clean:data
 # View session directories
 ls -lh rtms/data/audio/
 
-# Play mixed output (requires ffplay)
+# Play mixed output (optional — requires ffplay installed locally)
 ffplay rtms/data/audio/2024-01-15_10-30-45/mixed.wav
 
 # View today's transcripts
@@ -286,30 +289,11 @@ cat rtms/data/transcripts/$(date +%Y-%m-%d).txt
 
 ## Development
 
-### Local Development (without Docker)
-
-```bash
-# Terminal 1: Start backend
-cd backend
-npm run dev
-
-# Terminal 2: Start RTMS server
-cd rtms
-npm run dev
-
-# Terminal 3: Start frontend
-cd frontend
-npm start
-
-# Terminal 4: Start ngrok
-npm run ngrok
-```
-
-### Docker Development
+### Docker (recommended)
 
 ```bash
 # Start all services
-npm start
+docker compose up
 
 # View logs
 npm run logs
@@ -319,11 +303,29 @@ npm run logs:frontend
 npm run logs:backend
 npm run logs:rtms
 
-# Rebuild containers
+# Rebuild containers after dependency changes
 npm run rebuild
 
 # Stop all services
-npm stop
+docker compose down
+```
+
+### Local (without Docker)
+
+> Requires Node.js (latest LTS), npm, and ffmpeg installed locally.
+
+```bash
+# Terminal 1: Start backend
+cd backend && npm run dev
+
+# Terminal 2: Start RTMS server
+cd rtms && npm run dev
+
+# Terminal 3: Start frontend
+cd frontend && npm start
+
+# Terminal 4: Start ngrok
+ngrok http 3001
 ```
 
 ### Available Scripts

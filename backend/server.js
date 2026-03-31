@@ -224,8 +224,6 @@ app.post('/api/webhooks/zoom', async (req, res) => {
   const rtmsEvents = [
     'contact_center.voice_rtms_started',
     'contact_center.voice_rtms_stopped',
-    'meeting.rtms_started',
-    'meeting.rtms_stopped'
   ];
 
   if (rtmsEvents.includes(event)) {
@@ -268,8 +266,7 @@ app.all('/api/zoom/*', async (req, res) => {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  const zoomPath = req.path.replace('/api/zoom/', '');
-  const zoomUrl = `https://api.zoom.us/v2/${zoomPath}`;
+  const zoomUrl = `${process.env.ZOOM_HOST || 'https://zoom.us'}`
 
   try {
     const response = await axios({

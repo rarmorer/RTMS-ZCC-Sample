@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 
 # Environment variables
@@ -55,3 +54,4 @@ coverage/
 # Misc
 *.pem
 .cache
+.claude/
