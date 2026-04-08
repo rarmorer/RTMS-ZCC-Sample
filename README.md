@@ -168,7 +168,7 @@ Once your app is installed for use, you can configure it with your Contact Cente
 |----------|-------------|---------|
 | `PORT` | Frontend port | `3000` |
 | `BACKEND_PORT` | Backend API port | `3001` |
-| `RTMS_PORT` | RTMS server port | `3002` |
+| `RTMS_PORT` | RTMS server port | `8080` |
 
 ### Other Configuration
 
